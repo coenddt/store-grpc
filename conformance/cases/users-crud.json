@@ -1,0 +1,16 @@
+{
+  "name": "users-crud",
+  "service": "User",
+  "steps": [
+    { "rpc": "CreateUser", "request": { "body": { "name": "alice", "age": 30 } }, "expect": { "ok": true, "dataKeys": ["name", "age"] } },
+    { "rpc": "ListUser", "request": { "q": "($condition: @c0) { name, age }", "params": { "c0": { "age": 30 } } }, "expect": { "ok": true, "listLength": 1 } },
+    { "rpc": "ListUser", "request": {}, "expect": { "ok": true, "listLength": 1 } },
+    { "rpc": "GetUser", "useCreatedId": true, "request": {}, "expect": { "ok": true, "dataKeys": ["name", "age"] } },
+    { "rpc": "UpdateUser", "useCreatedId": true, "request": { "set": { "age": 31 } }, "expect": { "ok": true, "dataKeys": ["age"] } },
+    { "rpc": "DeleteUser", "useCreatedId": true, "request": {}, "expect": { "ok": true } },
+    { "rpc": "GetUser", "useCreatedId": true, "request": {}, "expect": { "statusCode": "NOT_FOUND", "errorCode": "NOT_FOUND" } },
+    { "rpc": "CreateUser", "request": { "body": [1, 2] }, "expect": { "statusCode": "INVALID_ARGUMENT", "errorCode": "INVALID_BODY" } },
+    { "rpc": "ListUser", "request": { "params": "not-json" }, "expect": { "statusCode": "INVALID_ARGUMENT", "errorCode": "INVALID_PARAM" } },
+    { "rpc": "ListUser", "request": { "q": "($bogus", "params": null }, "expect": { "statusCode": "INVALID_ARGUMENT", "errorCode": "GQL_PARSE" } }
+  ]
+}

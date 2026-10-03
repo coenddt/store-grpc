@@ -1,0 +1,23 @@
+[project]
+name = "store-grpc-py"
+version = "0.1.0"
+description = "gRPC adapter that auto-generates a .proto service per schema for py-store (schema-driven CRUD over GQL, proto-first with runtime compilation, zero manual protoc)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["py-store", "storepy", "grpc", "protobuf", "crud", "gql"]
+dependencies = []
+
+[project.optional-dependencies]
+grpc = ["grpcio>=1.60", "grpcio-tools>=1.60"]
+dev = ["pytest>=8", "grpcio>=1.60", "grpcio-tools>=1.60"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

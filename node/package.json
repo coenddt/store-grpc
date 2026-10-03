@@ -1,0 +1,37 @@
+{
+  "name": "store-grpc-node",
+  "version": "0.1.0",
+  "description": "gRPC adapter that auto-generates a .proto service per schema for nodejs-store (schema-driven CRUD over GQL, proto-first with runtime serialization, zero protoc)",
+  "main": "src/index.js",
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": [
+    "nodejs-store",
+    "grpc",
+    "protobuf",
+    "crud",
+    "gql"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "protobufjs": "^7.2.0"
+  },
+  "peerDependencies": {
+    "nodejs-store": ">=1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "nodejs-store": {
+      "optional": true
+    }
+  },
+  "optionalDependencies": {
+    "@grpc/grpc-js": "^1.10.0"
+  }
+}

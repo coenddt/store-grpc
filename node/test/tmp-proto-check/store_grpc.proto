@@ -1,0 +1,33 @@
+// 由 store-grpc 自动生成 —— 事实源：store 的 JSON schema（与 store-api / store-graphql 同源）
+syntax = "proto3";
+
+package store.v0;
+
+message ListRequest {
+  string q = 1;           // 完整 GQL 查询串（自模型名始）；空串 ⇒ 服务端补 schema 投影
+  string params_json = 2; // GQL params（如 {"c0":{"age":{"$gte":18}}}）的 JSON 编码
+}
+
+message GetRequest     { string id = 1; }
+
+message CreateRequest  { string body_json = 1; }
+
+message UpdateRequest  { string id = 1; string set_json = 2; }
+
+message DeleteRequest  { string id = 1; }
+
+message StoreReply     { string data_json = 1; }
+
+// 用户表：平台账号主档
+service User {
+  // 列表查询：q 为完整 GQL 查询串（自模型名始，与 REST ?q= 同源）；空串 ⇒ 服务端按 schema 投影
+  rpc ListUser (ListRequest) returns (StoreReply);
+  // 单条查询：按 id_field 精确匹配；无记录 ⇒ NOT_FOUND
+  rpc GetUser (GetRequest) returns (StoreReply);
+  // 插入：body_json 必须为 JSON 对象编码
+  rpc CreateUser (CreateRequest) returns (StoreReply);
+  // 按 id_field 定位后部分更新：set_json 必须为 JSON 对象编码；返回 store.update 原始结果
+  rpc UpdateUser (UpdateRequest) returns (StoreReply);
+  // 按 id_field 定位删除：返回 store.remove 原始结果
+  rpc DeleteUser (DeleteRequest) returns (StoreReply);
+}
