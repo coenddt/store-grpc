@@ -1,6 +1,6 @@
 {
   "name": "store-grpc-node",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "gRPC adapter that auto-generates a .proto service per schema for nodejs-store (schema-driven CRUD over GQL, proto-first with runtime serialization, zero protoc)",
   "main": "src/index.js",
   "files": [

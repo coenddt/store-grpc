@@ -45,7 +45,7 @@ server = create_server(store, port=50051) # grpcio server, runtime-compiled
 1. **Single source**: store's pure JSON schema (same as REST / GraphQL skins)
 2. **Surface**: one service per model — `List{Name}` / `Get{Name}` / `Create{Name}` / `Update{Name}` / `Delete{Name}`; annotations `"x-grpc": {"hidden": true | "readonly": true}`; archived tables filtered (`XxxDeleted` with `Xxx` present)
 3. **JSON-string payloads (v0)**: `q` (GQL remainder after the model name, same as REST `?q=`) + `params_json` in, `data_json` out — zero ambiguity, lowest cross-runtime parity cost
-4. **Errors**: HTTP-skin status mapping → gRPC status + details + `store-error-code` trailer (`INVALID_PARAM`/`INVALID_BODY`/`GQL_PARSE`/`CONTEXT_ERROR`/`ERR_PERMISSION`/`NOT_FOUND`/…), no error masking
+4. **Errors**: HTTP-skin status mapping → gRPC status + details + `store-error-code` trailer (`INVALID_PARAM`/`INVALID_BODY`/`GQL_PARSE`/`CONTEXT_ERROR`/`ERR_PERMISSION`/`no_context`→`PERMISSION_DENIED`/`NOT_FOUND`/…), no error masking
 
 ## Pluggable with the other skins
 

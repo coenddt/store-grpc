@@ -45,7 +45,7 @@ server = create_server(store, port=50051) # grpcio server，运行时编译
 1. **生成源唯一**：store 的纯 JSON schema（与 REST / GraphQL 皮肤同源）
 2. **生成面**：每模型一个 service——`List{Name}` / `Get{Name}` / `Create{Name}` / `Update{Name}` / `Delete{Name}`；注记 `"x-grpc": {"hidden": true | "readonly": true}`；归档表过滤（`XxxDeleted` 且 `Xxx` 在列）
 3. **JSON string 承载（v0）**：入参 `q`（模型名之后的 GQL 余部，与 REST `?q=` 同源）+ `params_json`，出参 `data_json`——零歧义、跨端 parity 成本最低
-4. **错误**：HTTP 皮肤状态码映射 → gRPC status + details + `store-error-code` trailer（`INVALID_PARAM` / `INVALID_BODY` / `GQL_PARSE` / `CONTEXT_ERROR` / `ERR_PERMISSION` / `NOT_FOUND` / …），禁掩盖错误
+4. **错误**：HTTP 皮肤状态码映射 → gRPC status + details + `store-error-code` trailer（`INVALID_PARAM` / `INVALID_BODY` / `GQL_PARSE` / `CONTEXT_ERROR` / `ERR_PERMISSION` / `no_context`→`PERMISSION_DENIED` / `NOT_FOUND` / …），禁掩盖错误
 
 ## 与另两层皮肤的插拔组合
 
