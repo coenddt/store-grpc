@@ -17,6 +17,7 @@ REST 的错误是 HTTP 状态码 + JSON body；gRPC 的错误承载为三件套�
 | `GQL_PARSE` | `INVALID_ARGUMENT` | 400 | core 抛 `ERR_GQL_PARSE:`（details 剥前缀取原文） |
 | `CONTEXT_ERROR` | `UNAUTHENTICATED` | 401 | contextProvider 非权限类抛错 |
 | `ERR_PERMISSION` | `PERMISSION_DENIED` | 403 | PermissionError 类 / `ERR_PERMISSION:` 前缀 |
+| `no_context` | `PERMISSION_DENIED` | 403 | host `NoContextError`（machine code `no_context`）/ core `ERR_NO_CONTEXT:` 前缀（requireContext 开启且 ctx 缺失，与 PermissionError 同属权限类） |
 | `NOT_FOUND` | `NOT_FOUND` | 404 | queryOne 空结果 |
 | err.code / 类名 | `INTERNAL` | 500 | 其余一切错误（码取 err.code，缺省类名，再缺省 `STORE_ERROR`） |
 
@@ -26,6 +27,7 @@ REST 的错误是 HTTP 状态码 + JSON body；gRPC 的错误承载为三件套�
 适配层守卫（INVALID_PARAM / INVALID_BODY / NOT_FOUND / CONTEXT_ERROR）
   → PermissionError 类判定（store.PermissionError 可得时按类型，禁按文案匹配）
   → ERR_PERMISSION: 前缀判定（core 稳定前缀契约）
+  → NoContext（machine code `no_context` / ERR_NO_CONTEXT: 前缀，权限类同档）→ PERMISSION_DENIED
   → ERR_GQL_PARSE: 前缀判定（details 剥前缀取原文）
   → 其余 INTERNAL 透传
 ```

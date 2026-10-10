@@ -192,6 +192,15 @@ function mapStoreError(err, PermissionErrorClass, grpc) {
   if (err && typeof err.message === 'string' && err.message.startsWith('ERR_PERMISSION:')) {
     return fail(grpc.status.PERMISSION_DENIED, 'ERR_PERMISSION', err.message);
   }
+  // spec/03 判定顺序：权限类同档 —— NoContext（requireContext 开启且 ctx 缺失）。
+  // 宿主（nodejs-store）以 machine code `no_context` 承载（NoContextError，宿主已剥前缀）；
+  // 字符串通道 host 则保留 `ERR_NO_CONTEXT:` 前缀。二者同 ⇒ PERMISSION_DENIED。
+  if (err && err.code === 'no_context') {
+    return fail(grpc.status.PERMISSION_DENIED, storeCode(err), err.message);
+  }
+  if (err && typeof err.message === 'string' && err.message.startsWith('ERR_NO_CONTEXT:')) {
+    return fail(grpc.status.PERMISSION_DENIED, 'no_context', err.message);
+  }
   if (err && typeof err.message === 'string' && err.message.startsWith('ERR_GQL_PARSE:')) {
     return fail(grpc.status.INVALID_ARGUMENT, 'GQL_PARSE', err.message.slice('ERR_GQL_PARSE:'.length));
   }
@@ -215,6 +224,9 @@ function makeHandlers(store, s, opts, PermissionErrorClass, grpc) {
           // spec/02：PermissionError 类 / ERR_PERMISSION: 前缀 ⇒ PERMISSION_DENIED；其余 ⇒ UNAUTHENTICATED
           if (PermissionErrorClass && e instanceof PermissionErrorClass) throw e;
           if (e && typeof e.message === 'string' && e.message.startsWith('ERR_PERMISSION:')) throw e;
+          // 权限类同档：NoContext（machine code `no_context` / ERR_NO_CONTEXT: 前缀）同样上抛按权限类映射
+          if (e && (e.code === 'no_context'
+            || (typeof e.message === 'string' && e.message.startsWith('ERR_NO_CONTEXT:')))) throw e;
           throw errWith('CONTEXT_ERROR', e && e.message != null ? String(e.message) : '');
         }
         // spec/02：null/undefined 同样显式注入（setContext(null) 清除语义必须落地，

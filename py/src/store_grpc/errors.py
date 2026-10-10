@@ -8,6 +8,7 @@ from grpc import StatusCode
 
 ERR_GQL_PARSE_PREFIX = "ERR_GQL_PARSE:"
 ERR_PERMISSION_PREFIX = "ERR_PERMISSION:"
+ERR_NO_CONTEXT_PREFIX = "ERR_NO_CONTEXT:"
 
 GUARD_CODES_INVALID = ("INVALID_PARAM", "INVALID_BODY")
 
@@ -75,7 +76,7 @@ def require_json_object(raw: str | None, label: str):
 
 
 def map_store_error(err: BaseException, permission_error: type[BaseException] | None) -> MappedError:
-    """spec/03 判定链：适配层守卫 → PermissionError 类 → ERR_PERMISSION: 前缀 → ERR_GQL_PARSE: 前缀 → INTERNAL。
+    """spec/03 判定链：适配层守卫 → PermissionError 类 → ERR_PERMISSION: 前缀 → ERR_NO_CONTEXT: 前缀 / code → ERR_GQL_PARSE: 前缀 → INTERNAL。
 
     details 一律原 message 透传、取不到置空串（禁伪造）。
     """
@@ -98,6 +99,12 @@ def map_store_error(err: BaseException, permission_error: type[BaseException] | 
 
     if message.startswith(ERR_PERMISSION_PREFIX):
         return fail(StatusCode.PERMISSION_DENIED, "ERR_PERMISSION", message)
+
+    # spec/03 判定顺序：权限类同档 —— NoContext（requireContext 开启且 ctx 缺失）。
+    # py-store NoContextError 带 machine code `no_context`（已剥前缀）；字符串通道 host
+    # 保留 `ERR_NO_CONTEXT:` 前缀。二者同 ⇒ PERMISSION_DENIED。
+    if getattr(err, "code", None) == "no_context" or message.startswith(ERR_NO_CONTEXT_PREFIX):
+        return fail(StatusCode.PERMISSION_DENIED, "no_context", message)
 
     if message.startswith(ERR_GQL_PARSE_PREFIX):
         return fail(StatusCode.INVALID_ARGUMENT, "GQL_PARSE", message[len(ERR_GQL_PARSE_PREFIX):])
