@@ -1,689 +1,236 @@
 # store-grpc
 
-为 common-store 数据层家族（nodejs-store / py-store / go-store）按 schema 自动生成**标准 gRPC** API——同一份 JSON schema 事实源之上的第三层皮肤（第一层 REST：[store-api](https://github.com/coenddt/store-api)，第二层 GraphQL：[store-graphql](https://github.com/coenddt/store-graphql)）。
+**为 store 里已有的 JSON schema 生成标准 gRPC 服务，每个模型一个——proto 优先，零 protoc，磁盘上不留生成代码。给需要在内部服务间暴露强契约、又不想维护生成代码的团队用。**
 
-这里的 gRPC **只是 GQL 的又一层 RPC 皮肤**：proto-first，**零 protoc**。每个 service / rpc / 参数 / 错误都与 store 既有的 schema / GQL / RBAC 语义一一对应——适配层零语义发明。
+![npm](https://img.shields.io/npm/v/store-grpc-node.svg)
+![PyPI](https://img.shields.io/pypi/v/store-grpc-py.svg)
+![license](https://img.shields.io/badge/license-MIT-blue.svg)
+![spec](https://img.shields.io/badge/spec-00--03-informational)
 
-- **Node**——`store-grpc-node`（npm）：`@grpc/grpc-js` 运行时 + `protobufjs` **动态序列化**。**零 protoc**——无 `.proto` 编译步骤、无生成代码落盘。
-- **Python**——`store-grpc-py`（PyPI）：`grpcio` + `grpcio-tools`，proto 由内存文本**运行时编译**。**零手工 protoc**——你从不自己跑 `protoc`。
-- **共享**——`spec/`（proto 生成 / 执行映射 / 错误与上下文的唯一事实源）+ `conformance/`（跨运行时用例，双端 runner 断言同一份 JSON）。
+中文文档（本页） · 行为契约：[`spec/00`–`spec/03`](./spec/00-overview.md) · English: [README.md](./README.md)
 
-设计规则（三条铁律，见 `spec/00-overview.md`）：
+- 两个运行时，一份契约：`store-grpc-node`（npm）与 `store-grpc-py`（PyPI）。
+- `.proto` 从内存生成；服务器注册的就是它导出的那份文本。
+- Node ≥ 18，Python ≥ 3.10；当前发布 `0.2.4`。
 
-1. **零语义发明**——service / rpc / 参数 / 错误 / 权限必须能映射到 store 已有语义；store 没有的，本层不提供。
-2. **双端 parity 先行**——任何变更先改 `spec/`，再双端同步实现，再补 conformance 用例；规范 / 代码 / 用例不一致即为缺陷。
-3. **禁掩盖错误**——store 抛出的任何错误都原样映射为带语义的 gRPC 错误（`status` + `details` + `store-error-code` trailer）。禁静默成功、禁回退默认值、禁把中性结果当错误。
+## 假设契约是 git 里的一个文件
 
-> English index: [README.md](./README.md)
+三个内部服务共用一个账号模型。账号服务持有数据库，计费与报表调它。契约是一个提交在账号仓库里的 `.proto`：12 个模型，每模型 5 个 rpc——60 个方法签名，每种语言一套生成的 DTO。
 
-## 运行时矩阵
+第一个「加个可选字段」的 schema 变更，会启动一套小仪式：重新生成文件，在三个 CI 镜像里对齐 `protoc` 插件版本，提交生成代码，再 review 一份没人逐行看的 diff。而 `.proto` 对权限只字不提，所以某个模型的读规则在底下变了，流水线依然是绿的。
 
-| | Node | Python |
-|---|---|---|
-| 包 | `store-grpc-node`（npm） | `store-grpc-py`（PyPI），`import store_grpc` |
-| gRPC 承载 | `@grpc/grpc-js`——*可选*依赖 | `grpcio`——*可选* extra（`[grpc]`） |
-| 序列化 | `protobufjs` 解析内存里的 `.proto` 文本，**动态**编解码 | `grpcio-tools`（`grpc_tools.protoc`）在**运行时**把内存 `.proto` 文本编译为 descriptor set，再构造消息类 |
-| protoc | **零 protoc**——库从不调用 `protoc` / `grpcurl` | **零手工 protoc**——`grpc_tools.protoc` 进程内运行，用户从不调用 |
-| 生成代码落盘 | 无 | 无 |
-| 公开入口 | `buildProto` / `exportProto` / `createServer` | `build_proto` / `export_proto` / `create_server` |
-| 服务句柄 | `Promise<{ server, proto, port, shutdown() }>` | `GrpcServer`：`.server` / `.pb` / `.proto` / `.port` / `.stop(grace)` |
-| 错误模块 | `mapStoreError`（纯函数） | `store_grpc.errors.map_store_error`（纯函数） |
-| 最小运行时 | Node >= 18（`engines`） | Python >= 3.10（`requires-python`） |
-| 当前版本 | `0.2.1` | `0.2.1` |
+这就是本仓要去掉的那笔税。`store-grpc` 把已注册的 JSON schema 当作 IDL 源，在构建期与运行期都把 `.proto` 文本建在内存里，从不把生成代码写回仓库。契约依然存在——你可以导出给任何外部客户端——但它是从 schema 推导出来的，不是并排维护的第二份。
 
-同一份 schema，两端生成的 `.proto` **逐字节一致**，并对同一份 `conformance/cases/*.json` 断言行为一致。
+## 它到底做什么
 
-## 目录
+它是一层协议皮，不是数据层。store 知道的每个模型，它生成一个含五个一元 rpc 的 service，并把每个 rpc 映射到一次已经存在的 store 调用。鉴权、限流、缓存、方言路由都留在原地。
 
-1. [它是什么](#它是什么)
-2. [生成模型](#生成模型)
-3. [何时使用](#何时使用)
-4. [何时不要用](#何时不要用)
-5. [安装](#安装)
-6. [快速上手](#快速上手)
-   - [Node](#快速上手node)
-   - [Python](#快速上手python)
-7. [Proto 参考](#proto-参考)
-8. [执行映射](#执行映射)
-9. [错误与上下文](#错误与上下文)
-10. [场景事例](#场景事例)
-11. [与其它协议皮的关系](#与其它协议皮的关系)
-12. [v0 范围与路线](#v0-范围与路线)
-13. [FAQ](#faq)
-14. [开发](#开发)
-15. [相关项目](#相关项目)
-16. [License](#license)
+| 你在 schema 里声明 | gRPC 面得到 |
+|---|---|
+| 模型 `User` | `service User`，含 `ListUser`、`GetUser`、`CreateUser`、`UpdateUser`、`DeleteUser` |
+| `_id`（缺省 `idField`） | `Get`、`Update`、`Delete` 使用的定位键 |
+| 归档的 `UserDeleted`，而 `User` 存在 | 跳过，与 REST、GraphQL 皮肤一致 |
+| `"x-grpc": {"hidden": true}` | 完全不生成 service |
+| `"x-grpc": {"readonly": true}` | 只生成 `List` 与 `Get` |
+| 模型的 `description` | 原样写成 service 的 `//` 注释 |
 
-## 它是什么
+五个方法名是固定的，不为任何模型发明新动词。
 
-`store-grpc` 是 common-store 数据层之上的 **gRPC 适配层**。它不是新的数据层，除了「gRPC ↔ store 调用」的翻译之外不做任何事——不做鉴权、不做限流、不做缓存。
+| rpc | 请求字段 | store 调用 | 成功 |
+|---|---|---|---|
+| `ListUser` | `q`、`params_json` | `store.query(name + (q or proj), params)` | 数组 JSON |
+| `GetUser` | `id` | `store.queryOne('User($condition: @c0)' + proj, { c0: { _id: id } })` | 对象 JSON；空 ⇒ `NOT_FOUND` |
+| `CreateUser` | `body_json` | `store.insert('User', JSON.parse(body_json))` | 插入后的文档 |
+| `UpdateUser` | `id`、`set_json` | `store.update('User', { _id: id }, JSON.parse(set_json))` | `store.update` 的原始返回，不回读 |
+| `DeleteUser` | `id` | `store.remove('User', { _id: id })` | `store.remove` 的原始返回 |
 
-```
-gRPC 客户端
-   │  protobuf（package store.v0）
-store-grpc（本仓库：grpc-js 适配器 / grpcio 适配器）
-   │  store 原生 API：query / queryOne / insert / update / remove + setContext
-数据层（nodejs-store / py-store / go-store / rust-store）
-   │  GQL → 命令规划
-rust-store core（解析 / 权限 / 方言）
-   │
-数据库（MongoDB / MySQL / PostgreSQL / SQLite）
-```
+`q` 是去掉模型名后的 GQL 余部，与 REST 的 `?q=` 同源。`q` 为空时，适配器按 schema 的 `fields` 与 `computes` 拼出投影 ` { f1, f2 }`；`q` 存在时不再追加。上游 schema 没有字段时 `proj` 为空，回复只带 `_id`——这是 schema 不完整的显式后果，与 REST 相同。
 
-store 实例与 REST、GraphQL 皮肤共享——同一份 JSON schema、同一套 GQL、同一套 RBAC。与 REST/GraphQL 唯一的本质差异是：**gRPC 是静态 IDL 协议，server 端必须有 `.proto`**。本仓库用 **proto-first / 双出口** 应对：
+## 关键机制
 
-- `buildProto(store, opts)` / `build_proto(store, ...)` → `.proto` 文本（IDL 事实源）。**纯构建，零 gRPC 依赖**——永远可用。
-- `exportProto(store, opts)` / `export_proto(store, ...)` → 同一份文本，命名对齐 store-graphql 的 `exportSDL` / `export_sdl`；这是你落盘给外部 `protoc` / `grpcurl` / 客户端 codegen 用的产物。
-- `createServer(store, opts)` / `create_server(store, ...)` → 运行中的 gRPC server。它用**同一份 proto 文本**做运行时序列化注册（Node：`protobufjs.parse` + 手搭 grpc-js `ServiceDefinition`；Python：进程内 `grpc_tools.protoc` + generic handler）。**零 protoc 步骤、零生成代码落盘。**
+### proto 从内存构建
 
-## 生成模型
+`buildProto` / `build_proto` 是一次纯字符串构建，**零 gRPC 依赖**——它读 `store.list()` 与 `store.get(name)`，打印 `.proto`。`exportProto` / `export_proto` 返回同一份文本，命名对齐 GraphQL 的 `exportSDL`，也是你交给 `protoc`、`grpcurl` 或客户端生成器的产物。
 
-1. **生成源唯一**——store 的纯 JSON schema（`store.list()` / `store.get(name)`），与 REST / GraphQL 皮肤消费的完全一致。
-2. **生成面**——每模型一个 service、固定五段 rpc：
-   `List{Name}` / `Get{Name}` / `Create{Name}` / `Update{Name}` / `Delete{Name}`。
-   模型注记：`"x-grpc": {"hidden": true}`（整个 service 不生成）与 `"x-grpc": {"readonly": true}`（只生成查询两段）。归档表过滤（`XxxDeleted` 在 `Xxx` 也在列时跳过）。
-3. **JSON string 承载（v0）**——入参字段 `q`（GQL 余部，与 REST `?q=` 同源）+ `params_json`；出参字段 `data_json`。理由（记录于 `spec/01-proto-generation.md`）：GQL 查询串与 params 本就是动态 JSON，用 string 承载**零歧义、跨端 parity 成本最低**；逐字段强类型 message 是 v1 演进方向。
-4. **错误**——REST 皮肤的状态码映射转为 gRPC 的 **status code + details + `store-error-code` trailer**（`INVALID_PARAM`、`INVALID_BODY`、`GQL_PARSE`、`CONTEXT_ERROR`、`ERR_PERMISSION`、`no_context` → `PERMISSION_DENIED`、`NOT_FOUND`，其余 → `INTERNAL`）。见[错误与上下文](#错误与上下文)。
-5. **双出口、同一份文本**——`buildProto()` / `exportProto()` 给你 `.proto`；`createServer()` 在运行时注册同一份文本。库永远不写 `.pb.go` / `_pb2.py` / 生成的 JS。
-6. **语言命名惯例（显式声明，非 parity 缺陷）**——`.proto` 字段名恒为 `snake_case`（`params_json` / `body_json` / `set_json` / `data_json`）。各语言按其 protobuf 惯例呈现：Python `_pb2` 用 `body_json`；Node（protobufjs）用 `bodyJson`；Go 生成代码用 `BodyJson`。适配层不做跨惯例改写。
+`createServer` / `create_server` 在运行期注册同一份文本。Node 用 `protobufjs` 解析，交给 grpc-js 一个手工构建的 `ServiceDefinition`；Python 在进程内跑 `grpc_tools.protoc` 产出 descriptor set，用私有 descriptor pool 构造消息类，并按 proto 文本的 SHA-1 缓存。编译出的类挂在 server 句柄的 `server.pb` 上。两个运行时都不写 `.js` stub、`_pb2.py` 或 `.pb.go`。
 
-## 何时使用
+打印第一行 proto 之前，作用域规则已经生效：
 
-- **强类型、契约优先的内部服务调用**——`.proto` 即接口契约。
-- **一份产物、多语言客户端**——从单一导出的 `.proto` 生成 Go / Java / C++ / Python / Node 客户端。
-- **长连接 / 高吞吐读**——用 HTTP/2 多路复用 + 二进制帧，取代每次请求的 JSON-over-HTTP。
-- **独立端口 / 模型子集**——把一份精选的 `resources` 列表暴露在独立端口，与 REST/GraphQL 面隔离。
-- **跨语言一致的错误语义**——每种语言看到相同的 `status` 码与相同的机器可读 `store-error-code`。
-- **你已用 nodejs-store / py-store / go-store**，想加一层 gRPC 又不想手写 `.proto`。
+- `package` 恒为 `store.v0`。
+- service 名 = 模型名首字母大写、其余原样（`user_profile` → `User_profile`）。
+- rpc 名 = `List` / `Get` / `Create` / `Update` / `Delete` + service 名。
+- 两个名字大写后相撞（`user` 与 `User`）在构建期抛 `ERR_NAME_CONFLICT:`，绝不静默合并。
 
-## 何时不要用
+### 动态序列化，一种载荷形状
 
-- **今天就要逐字段强类型 message / 生成的 DTO**——v0 用 JSON string 承载，强类型是 v1。
-- **需要流式**——v0 只有 unary（每个 rpc 都是 `requestStream: false`、`responseStream: false`）。流式在路线图上。
-- **需要 server reflection**（不带 `.proto` 就用 `grpcurl`）——v0 没有；请导出 `.proto` 并用 `-proto` 传入。reflection 在路线图上。
-- **想要浏览器原生客户端且无代理**——gRPC over HTTP/2 不能被浏览器直接调用；gRPC-Web 不在范围内。
-- **想让适配层做鉴权 / 限流 / 缓存**——按设计它一件都不做，这些属于宿主或网关。
+v0 把动态数据装成 JSON 字符串：进 `q` + `params_json`，出 `data_json`；写操作收 `body_json` 或 `set_json`。这个决定记录在 `spec/01`：GQL 查询与参数本质上是动态 JSON，用字符串承载零歧义，跨运行时 parity 成本最低。逐字段类型化消息是 v1 事项，且必须先改 spec。
 
-## 安装
+`.proto` 里的字段名恒为 `snake_case`。各运行时按自己的 protobuf 惯例呈现：protobufjs 暴露 `dataJson`，`_pb2` 保留 `data_json`，Go codegen 产出 `DataJson`。这是已声明的语言惯例，不是 parity 缺陷；适配器不做跨语言改写。
 
-### Node
+两个运行时为同一份 schema 生成**相同的 service 树**——同 package、同 message、同 rpc 签名——并执行同一批 `conformance/cases/*.json`，断言相同的状态码、错误码与 JSON 载荷。可执行契约是 rpc 面，不是生成注释的措辞。
+
+### 错误、metadata 与三种状态
+
+一个 gRPC 错误有三部分：`status` 码，原样承载 store 原始 message 的 `details`（取不到则空串，绝不编造），以及带稳定机器码的 `store-error-code` trailer。trailer 用的码表与 REST 的 `error.code` 相同。
+
+| `store-error-code` | gRPC status | REST | 触发 |
+|---|---|---|---|
+| `INVALID_PARAM` | `INVALID_ARGUMENT` | 400 | `params_json` 不是合法 JSON |
+| `INVALID_BODY` | `INVALID_ARGUMENT` | 400 | `body_json` / `set_json` 不是 JSON 对象 |
+| `GQL_PARSE` | `INVALID_ARGUMENT` | 400 | core 抛 `ERR_GQL_PARSE:`；details 剥掉前缀 |
+| `CONTEXT_ERROR` | `UNAUTHENTICATED` | 401 | context hook 抛非权限错误 |
+| `ERR_PERMISSION` / 权限类名 | `PERMISSION_DENIED` | 403 | `PermissionError` 类型或稳定前缀 `ERR_PERMISSION:` |
+| `no_context` | `PERMISSION_DENIED` | 403 | 宿主 `NoContextError` 或 `ERR_NO_CONTEXT:` 前缀 |
+| `NOT_FOUND` | `NOT_FOUND` | 404 | `queryOne` 返回空；或宿主/core 抛 `ERR_NOT_FOUND` / `ERR_NOT_FOUND:` |
+| `err.code` / 类名 | `INTERNAL` | 500 | 其余一切，message 原样透传 |
+
+判定顺序在两个运行时完全一致：适配器守卫 → `PermissionError` 类型判定（绝不按文案匹配）→ `ERR_PERMISSION:` 前缀 → `no_context` / `ERR_NO_CONTEXT:` → `ERR_GQL_PARSE:` → 默认 `INTERNAL` 桶。
+
+这层皮肤不把 store 的三种结果压成同一种鉴权失败：
+
+| 发生了什么 | 这层皮肤返回什么 |
+|---|---|
+| 调用被允许 | `StoreReply.data_json`；成功回复里不存在 error 字段 |
+| 行不存在 | `Get` 返回 `NOT_FOUND` + `store-error-code: NOT_FOUND` |
+| 行存在但调用方无权操作 | `PERMISSION_DENIED`，携带 store 原始权限措辞，不重新包装 |
+
+身份随请求 metadata 传递，不是环境状态。`contextProvider`（Node）/ `context_provider`（Python）收到本次调用的 metadata，其返回值经 `store.setContext(ctx)` 注入。返回 `null` / `None` 同样显式注入，所以有状态的运行时无法残留上一个请求的身份。权限拒绝在 handler 语义执行之前判定：hook 抛错时，store 根本不会被调用。权限错误变成 `PERMISSION_DENIED`；其余 hook 失败变成 `UNAUTHENTICATED`，附原始 message。
+
+## 跑起来
 
 ```bash
-npm i store-grpc-node
-# 承载需要 @grpc/grpc-js（声明为 optional dependency；若你的包管理器跳过 optional 依赖，请显式安装）：
-npm i @grpc/grpc-js
-# nodejs-store 是 optional peer dependency——在持有 store 的应用里安装：
-npm i nodejs-store
+# Node
+npm install store-grpc-node @grpc/grpc-js protobufjs
+npm install nodejs-store        # 仅当 server 包真实 store 时需要
+
+# Python
+pip install "store-grpc-py[grpc]"
+pip install py-store            # 仅当 server 包真实 store 时需要
 ```
 
-- `protobufjs` 是常规依赖（用于 `.proto` 文本与序列化）。
-- `buildProto` / `exportProto` **完全不依赖 gRPC 库**即可用；只有 `createServer` 需要 `@grpc/grpc-js`。
+`buildProto` / `exportProto` 与 `build_proto` / `export_proto` 完全不需要装 gRPC 库；只有 server 入口需要传输层。
 
-### Python
+下面这段 Node 示例取自 `node/test/smoke.test.js`——一个 mock store 加真实 grpc-js server。生产环境把 mock 换成 `require('nodejs-store').store`。
 
-```bash
-pip install store-grpc-py            # 仅构建/导出：零运行时依赖
-pip install "store-grpc-py[grpc]"    # 承载：grpcio + grpcio-tools
-pip install py-store                 # 持有 store 的宿主
-```
-
-- `build_proto` / `export_proto` **不装 `grpcio`** 即可用。
-- `create_server` 延迟导入 `grpcio` + `grpcio-tools`；缺失时抛带安装指引的错误，绝不静默降级。
-
-## 快速上手
-
-### 快速上手（Node）
-
-```js
-// server.js  — 运行：node server.js
-const fs = require('node:fs');
-const { init, store } = require('nodejs-store');
-const { exportProto, createServer } = require('store-grpc-node');
-
-async function main() {
-  await init({ default: 'mongodb://127.0.0.1:27017/app' });
-  store.register({
-    name: 'User',
-    description: '用户表：平台账号主档',
-    fields: {
-      _id: { type: 'string' },
-      name: { type: 'string' },
-      age: { type: 'int' },
-    },
-  });
-
-  // 1) 产出 .proto——喂 grpcurl / protoc / 客户端 codegen。
-  fs.writeFileSync('store_grpc.proto', exportProto(store));
-
-  // 2) 承载同一份 schema——动态序列化，零 protoc。
-  const { port, proto, shutdown } = await createServer(store, { port: 50051 });
-  console.log(`store-grpc-node listening on 127.0.0.1:${port}`);
-  // Service: store.v0.User -> ListUser / GetUser / CreateUser / UpdateUser / DeleteUser
-
-  process.on('SIGINT', async () => { await shutdown(); process.exit(0); });
-}
-
-main();
-```
-
-用 `grpcurl` 调用（导出的 `.proto` 即客户端契约）：
-
-```bash
-# Create
-grpcurl -plaintext -proto store_grpc.proto \
-  -d '{"body_json": "{\"name\":\"alice\",\"age\":30}"}' \
-  127.0.0.1:50051 store.v0.User/CreateUser
-# -> {"dataJson": "{\"_id\":\"u1\",\"name\":\"alice\",\"age\":30}"}
-
-# List（q = GQL 余部 + params_json）
-grpcurl -plaintext -proto store_grpc.proto \
-  -d '{"q": "($condition: @c0) { name, age }", "params_json": "{\"c0\":{\"age\":30}}"}' \
-  127.0.0.1:50051 store.v0.User/ListUser
-# -> {"dataJson": "[{\"_id\":\"u1\",\"name\":\"alice\",\"age\":30}]"}
-
-# Get
-grpcurl -plaintext -proto store_grpc.proto \
-  -d '{"id": "u1"}' \
-  127.0.0.1:50051 store.v0.User/GetUser
-# -> {"dataJson": "{\"_id\":\"u1\",\"name\":\"alice\",\"age\":30}"}
-```
-
-在自己的 Node 客户端里用生成的 stub（grpc-js + protobufjs，无 codegen）：
-
-```js
+```javascript
 const grpc = require('@grpc/grpc-js');
 const protobuf = require('protobufjs');
 const { createServer } = require('store-grpc-node');
 
-// createServer() 之后，句柄上已经带有 proto 文本：
-const { port, proto } = await createServer(store, { port: 0 });
-const root = protobuf.parse(proto).root;
-const ListRequest = root.lookupType('store.v0.ListRequest');
-const StoreReply = root.lookupType('store.v0.StoreReply');
+const store = {
+  list: () => ['User'],
+  get: () => ({
+    name: 'User',
+    fields: { _id: { type: 'string' }, name: { type: 'string' }, age: { type: 'int' } },
+  }),
+  query: async () => [{ _id: 'u1', name: 'alice', age: 30 }],
+  queryOne: async () => ({ _id: 'u1', name: 'alice', age: 30 }),
+  insert: async (_name, doc) => ({ _id: 'u1', ...doc }),
+  update: async (_name, _cond, set) => ({ _id: 'u1', name: 'alice', ...set }),
+  remove: async () => 1,
+  setContext: async () => {},
+};
 
-const methods = {
-  ListUser: {
+(async () => {
+  const { port, proto, shutdown } = await createServer(store, { port: 0 });
+  const root = protobuf.parse(proto).root;
+  const Req = root.lookupType('store.v0.ListRequest');
+  const Reply = root.lookupType('store.v0.StoreReply');
+  const method = {
     path: '/store.v0.User/ListUser',
     requestStream: false, responseStream: false,
-    requestSerialize: (o) => Buffer.from(ListRequest.encode(ListRequest.fromObject(o)).finish()),
-    requestDeserialize: (b) => ListRequest.toObject(ListRequest.decode(b)),
-    responseSerialize: (o) => Buffer.from(StoreReply.encode(StoreReply.fromObject(o)).finish()),
-    responseDeserialize: (b) => StoreReply.toObject(StoreReply.decode(b)),
-  },
-};
-const Client = grpc.makeGenericClientConstructor(methods, 'User');
-const client = new Client(`127.0.0.1:${port}`, grpc.credentials.createInsecure());
-client.ListUser({ q: ' { name, age }' }, (err, res) => {
-  if (err) throw err;
-  console.log(JSON.parse(res.dataJson));
-});
+    requestSerialize: (o) => Buffer.from(Req.encode(Req.fromObject(o)).finish()),
+    requestDeserialize: (b) => Req.toObject(Req.decode(b)),
+    responseSerialize: (o) => Buffer.from(Reply.encode(Reply.fromObject(o)).finish()),
+    responseDeserialize: (b) => Reply.toObject(Reply.decode(b)),
+  };
+  const Client = grpc.makeGenericClientConstructor({ ListUser: method }, 'User');
+  const client = new Client(`127.0.0.1:${port}`, grpc.credentials.createInsecure());
+
+  client.ListUser({ q: ' { name, age }' }, async (err, reply) => {
+    if (err) throw err;
+    console.log(JSON.parse(reply.dataJson)); // [ { _id: 'u1', name: 'alice', age: 30 } ]
+    client.close();
+    await shutdown();
+  });
+})();
 ```
 
-### 快速上手（Python）
-
-```python
-# server.py  — 运行：python server.py
-import asyncio
-
-from py_store import init, store
-from store_grpc import export_proto, create_server
-
-async def main():
-    await init({'default': 'mongodb://127.0.0.1:27017/app'})
-    store.register({
-        'name': 'User',
-        'description': '用户表：平台账号主档',
-        'fields': {
-            '_id': {'type': 'string'},
-            'name': {'type': 'string'},
-            'age': {'type': 'int'},
-        },
-    })
-
-    # 1) 产出 .proto（与 Node 对同一 schema 产出的文本一致）。
-    with open('store_grpc.proto', 'w', encoding='utf-8') as f:
-        f.write(export_proto(store))
-
-    # 2) 承载它——grpcio server，proto 运行时进程内编译（零手工 protoc）。
-    server = create_server(store, port=50051)
-    print('store-grpc-py listening on 127.0.0.1:%d' % server.port)
-    try:
-        await asyncio.Event().wait()          # 保持运行
-    finally:
-        server.stop(None)
-
-asyncio.run(main())
-```
-
-用服务句柄上暴露的编译产物 `server.pb` 调用，或用同一份 `store_grpc.proto` 交给 `grpcurl`：
-
-```bash
-grpcurl -plaintext -proto store_grpc.proto \
-  -d '{"q": "($condition: @c0) { name, age }", "params_json": "{\"c0\":{\"age\":30}}"}' \
-  127.0.0.1:50051 store.v0.User/ListUser
-```
+Python 示例取自 `py/tests/test_smoke.py`——同样的 mock store 形状，真实 grpcio server，编译好的消息类在 `server.pb` 上。
 
 ```python
 import grpc
 from store_grpc import create_server
 
-server = create_server(store, port=0)          # 0 -> 随机端口
-channel = grpc.insecure_channel(f'127.0.0.1:{server.port}')
-unary = channel.unary_unary(
-    '/store.v0.User/ListUser',
+
+class Store:
+    list = staticmethod(lambda: ["User"])
+    get = staticmethod(lambda name: {"name": "User", "fields": {
+        "_id": {"type": "string"}, "name": {"type": "string"}, "age": {"type": "int"}}})
+
+    async def query(self, gql, params=None):
+        return [{"_id": "u1", "name": "alice", "age": 30}]
+
+    async def query_one(self, gql, params=None):
+        return {"_id": "u1", "name": "alice", "age": 30}
+
+    async def insert(self, name, data):
+        return {"_id": "u1", **data}
+
+    async def update(self, name, cond, data):
+        return {"_id": "u1", "name": "alice", **data}
+
+    async def remove(self, name, cond):
+        return 1
+
+    async def set_context(self, ctx):
+        pass
+
+
+server = create_server(Store(), port=0)
+channel = grpc.insecure_channel(f"127.0.0.1:{server.port}")
+list_user = channel.unary_unary(
+    "/store.v0.User/ListUser",
     request_serializer=server.pb.ListRequest.SerializeToString,
     response_deserializer=server.pb.StoreReply.FromString,
 )
-reply = unary(server.pb.ListRequest(q=' { name, age }'))
-print(reply.data_json)
+print(list_user(server.pb.ListRequest(q=" { name, age }")).data_json)
 channel.close()
+server.stop(None)
 ```
 
-> 生产中用 `create_server(store, port=50051)` 绑定并返回；退出时调用 `server.stop(None)`。
+生产环境传 `port=50051`，关闭时调 `server.stop(None)`；Node 的 `shutdown()` 在 `tryShutdown` 完成后 resolve。`port: 0` 让 OS 分配空闲端口，测试用的就是它。
 
-## Proto 参考
+## 边界：什么时候不要用它
 
-下面是 `exportProto` / `export_proto` 对 `User` 模型（字段 `_id`、`name`、`age`）产出的确切文本（这是真实的生成产物，见 `node/test/tmp-proto-check/store_grpc.proto`）：
+- **需要 store 没有的语义。** 第一条铁律是零语义发明：不做鉴权、不限流、不缓存、不写业务规则。它们属于宿主或网关。所有 rpc 都是一元的——流式不在 v0。
+- **今天就要逐字段类型化 DTO。** v0 把 `q`、`params` 和文档都装成 JSON 字符串。类型化消息需要改 spec，并协调两个运行时一起发布；那是 v1 方向，不是运行时开关。
+- **要浏览器原生调用或 server reflection。** gRPC over HTTP/2 不能从浏览器直接调，gRPC-Web 不在范围内；`grpcurl` 必须用 `-proto` 传入导出的 `.proto`，因为 v0 没有反射服务。
+- **打算只补一个运行时。** 第二条铁律是 parity 优先：先改 `spec/`，再改两个运行时，最后改 conformance。spec、代码、用例三者不一致就是缺陷，不是本地修补。
+- **希望错误被软化或兜底。** 第三条铁律是不掩盖错误：不 catch 后返回成功，不给默认回退，不把中性结果当错误。不认识 store 错误就归 `INTERNAL` 并保留原始 message，不做友好化改写。
 
-```proto
-// 由 store-grpc 自动生成 —— 事实源：store 的 JSON schema（与 store-api / store-graphql 同源）
-syntax = "proto3";
+这层皮肤也没有行数守卫。GraphQL 的缺省 50 / 上限 1000 属于那层皮肤的 spec；gRPC 与 REST 一样把 `q` 透传下去，行数封顶由 core 在 text2query 档生效。
 
-package store.v0;
+## 在家族里的位置
 
-message ListRequest {
-  string q = 1;           // 完整 GQL 查询串（自模型名始）；空串 ⇒ 服务端补 schema 投影
-  string params_json = 2; // GQL params（如 {"c0":{"age":{"$gte":18}}}）的 JSON 编码
-}
+它是同一份 JSON schema 之上的 gRPC 皮肤，与 REST 皮肤（[store-api](https://github.com/coenddt/store-api)）、GraphQL 皮肤（[store-graphql](https://github.com/coenddt/store-graphql)）、MCP 皮肤（[store-mcp](https://github.com/coenddt/store-mcp)）同源；[store-gateway](https://github.com/coenddt/store-gateway) 把它们组合在一个入口后面。它跑在 [nodejs-store](https://github.com/coenddt/nodejs-store) 与 [py-store](https://github.com/coenddt/py-store) 上，权限、命令规划、计算列与 SQL 方言在 [rust-store](https://github.com/coenddt/rust-store)；控制面、脚手架与引导插件分别是 [meta-store](https://github.com/coenddt/meta-store)、[create-store-app](https://github.com/coenddt/create-store-app)、[store-rbac-bootstrap](https://github.com/coenddt/store-rbac-bootstrap) 与 [store-resource-bootstrap](https://github.com/coenddt/store-resource-bootstrap)。
 
-message GetRequest     { string id = 1; }
+## 一图看懂
 
-message CreateRequest  { string body_json = 1; }
-
-message UpdateRequest  { string id = 1; string set_json = 2; }
-
-message DeleteRequest  { string id = 1; }
-
-message StoreReply     { string data_json = 1; }
-
-// 用户表：平台账号主档
-service User {
-  // 列表查询：q 为完整 GQL 查询串（自模型名始，与 REST ?q= 同源）；空串 ⇒ 服务端按 schema 投影
-  rpc ListUser (ListRequest) returns (StoreReply);
-  // 单条查询：按 id_field 精确匹配；无记录 ⇒ NOT_FOUND
-  rpc GetUser (GetRequest) returns (StoreReply);
-  // 插入：body_json 必须为 JSON 对象编码
-  rpc CreateUser (CreateRequest) returns (StoreReply);
-  // 按 id_field 定位后部分更新：set_json 必须为 JSON 对象编码；返回 store.update 原始结果
-  rpc UpdateUser (UpdateRequest) returns (StoreReply);
-  // 按 id_field 定位删除：返回 store.remove 原始结果
-  rpc DeleteUser (DeleteRequest) returns (StoreReply);
-}
+```mermaid
+flowchart LR
+  A[已注册的 JSON schema] --> B[内存中的 proto 文本]
+  B --> C[Node protobufjs]
+  B --> D[Python grpc_tools]
+  B --> E[导出的 proto 文件]
+  E --> F[外部客户端]
+  C --> G[RPC handler]
+  D --> G
+  G --> H[store 查询或写入]
+  H --> I[Rust core 与数据库]
+  G --> J[status details 与 trailer]
 ```
 
-要点：
+三句话：schema 就是 IDL；proto 只在内存里，磁盘上没有生成代码；错误原样透传，三种状态互不折叠。
 
-- **package** 固定为 `store.v0`（两端常量 `PACKAGE`）。所有 message / service 都在其下。
-- **service 名** = 模型名首字母大写、其余原样（`user` → `User`，`user_profile` → `User_profile`）。
-- **rpc 名** = 动词前缀（`List` / `Get` / `Create` / `Update` / `Delete`）+ service 名。
-- **`opts.resources`**（`createServer`）/ `resources=`（`create_server`）把生成限定到显式列表；缺省取 `store.list()` 并过滤归档表。
-- **`opts.idField`** / `id_field` 设定 `Get` / `Update` / `Delete` 用的主键字段；两端缺省 `_id`。
-- **description 透传**：模型级 `description` 写入 service 的 `//` 注释（见上方 `// 用户表：平台账号主档`）；rpc 注释为固定文案。适配层透传不改写。
-- **`q` 语义**：操作性契约（`spec/01`、`spec/02` 与两端实现）是 `q` 为**模型名之后**的 GQL 余部——适配层求值 `store.query(name + q, params)`（`node/src/index.js`、`py/src/store_grpc/server.py`），conformance 用例 `users-crud.json` 传入 `"q": "($condition: @c0) { name, age }"`。生成 `.proto` 里展示的行内注释把拼接后的形态说得较宽松；以「余部」形态为准。
-- **语言惯例**：`.proto` 字段保持 `snake_case`；Python `_pb2` 暴露 `body_json`，Node/`protobufjs` 暴露 `bodyJson`，Go codegen 暴露 `BodyJson`（`spec/01`）。
-- **`x-grpc` 注记是 schema 级的，不写进 `.proto`**：
-
-  | 注记 | 效果 |
-  |---|---|
-  | `"x-grpc": {"hidden": true}` | 整个 service **不生成** |
-  | `"x-grpc": {"readonly": true}` | 只生成 `List` / `Get` 两段 rpc |
-
-- **归档表过滤**：模型 `XxxDeleted` 在 `Xxx` 也在模型列表时被跳过（与 store-api / store-graphql 逐字一致）。
-- **重名守卫**：两个模型名首字母大写后相同（`user` + `User`）⇒ 构建期抛错、前缀 `ERR_NAME_CONFLICT:`——绝不静默合并。
-
-## 执行映射
-
-所有 rpc 的 handler 遵循同一骨架：解析请求 JSON → 调 store 原生 API → 成功结果 `JSON.stringify` 进 `StoreReply.data_json`；任何错误经 `spec/03` 判定链映射后终止调用。
-
-以模型 `User`、service `User`、`id_field = _id`、schema 投影 `proj`（` { name, age }` 形状）为例：
-
-| rpc | 请求 | store 调用 | 成功语义 |
-|---|---|---|---|
-| `ListUser` | `q`、`params_json` | `store.query(name + (q or proj), JSON.parse(params_json))` | 数组 JSON |
-| `GetUser` | `id` | `store.queryOne('User($condition: @c0)' + proj, { c0: { _id: id } })` | 对象 JSON；`null` ⇒ `NOT_FOUND` |
-| `CreateUser` | `body_json` | `store.insert('User', JSON.parse(body_json))` | 插入文档 JSON |
-| `UpdateUser` | `id`、`set_json` | `store.update('User', { _id: id }, JSON.parse(set_json))` | `store.update` 返回值原样（对齐 REST `PATCH`，不做二次回读） |
-| `DeleteUser` | `id` | `store.remove('User', { _id: id })` | `store.remove` 返回值原样 |
-
-**请求 JSON 解析规则**（`spec/02-execution-mapping.md`）：
-
-| 字段 | 规则 | 违例 |
-|---|---|---|
-| `params_json` | 空串 ⇒ params 为 `undefined`（不传）；否则必须是合法 JSON | ⇒ `INVALID_ARGUMENT` + `INVALID_PARAM` |
-| `body_json` | 必须是 JSON **对象**编码（数组 / 标量 / 非法 JSON 拒绝） | ⇒ `INVALID_ARGUMENT` + `INVALID_BODY` |
-| `set_json` | 同 `body_json` | ⇒ `INVALID_ARGUMENT` + `INVALID_BODY` |
-| `q` | 空串 ⇒ 服务端拼 `name + proj`；非空 ⇒ 服务端拼 `name + q`（模型名之后的 GQL 余部，**与 REST `?q=` 完全同源**） | core 抛 `ERR_GQL_PARSE:` ⇒ `spec/03` 判定链 |
-| `id` | 原样透传为定位值，服务端不做类型改写 | — |
-
-**schema 投影（`proj`）**：从 store 元数据生成显式投影串 ` { f1, f2 }`（fields **与** computes 均视为字段，与 store-graphql 对齐）。取值顺序：`store.get(name)`（nodejs 形态）→ py-store 的 `schema` 模块（当 `Store` 类未暴露 `get` 时）。两者皆不可得 / fields 为空 ⇒ 空串（data 仅 `_id`——上游 schema 定义不完整的**显式后果**，与 REST 同语义）。仅 `ListUser` 在 `q` 缺失时用 `proj`；`GetUser` 恒用 `proj`。
-
-**`limit` 守卫：本皮肤不设。** GraphQL 的缺省 50 / 上限 1000 属其 spec；REST 与 gRPC 的 `q` 透传不做行数守卫（core 的行数封顶在 text2query 档生效）。本皮肤与 REST 对齐。
-
-**上下文注入（`contextProvider`）**（`spec/02`）：
-
-- `opts.contextProvider`（Node）/ `context_provider=`（Python）是每 rpc 调用前的钩子，收到本次调用的元数据（Node：grpc-js `call.metadata`；Python：`ServicerContext.invocation_metadata()`）。
-- 返回值经 `store.setContext(ctx)` 注入。返回 `null`/`undefined` 时同样**显式**注入（`setContext(null)`）——清除语义必须落地，有状态持有的运行时禁止残留上一请求上下文，防身份跨请求泄漏。
-- 钩子抛错 ⇒ `spec/03` 判定链：`PermissionError` ⇒ `PERMISSION_DENIED`；其余 ⇒ `UNAUTHENTICATED`，原 message 原样透传。
-
-**server API**：
-
-- Node：`createServer(store, opts) -> Promise<{ server, proto, port, shutdown() }>`。给了 `opts.port` 时在 `bindAsync` 完成后 resolve（`port: 0` ⇒ 随机端口）；未给 `port` 时仅注册不监听。
-- Python：`create_server(store, *, port=None, host='127.0.0.1', resources=None, id_field='_id', context_provider=None, permission_error=None) -> GrpcServer`（同步；`.port` / `.stop(grace)`，与 Node 同构）。
-- 承载依赖两端均为 optional：node 缺 `@grpc/grpc-js` / py 缺 `grpcio`+`grpcio-tools` 时 `createServer` / `create_server` 抛**带安装指引**的错误；`buildProto` / `exportProto` / `build_proto` / `export_proto` 永远可用。
-- Python 侧有 sync-`grpcio` 与 async-`py-store` 的双兼容：py-store 实例方法为 `async`，适配层做 awaitable 检测——awaitable 在工作线程内经私有事件循环执行，同步返回值直接使用。两种宿主形态行为一致，适配层不做语义改写。
-
-## 错误与上下文
-
-REST 的错误是 HTTP 状态码 + JSON body；gRPC 的错误承载为三件套（`spec/03-errors-context.md`）：
-
-1. **status code**（`grpc.StatusCode`）
-2. **details**——原 message 透传；取不到则空串（**禁伪造**）
-3. **trailer metadata** `store-error-code`——稳定机器码（与 REST 的 `error.code` 同码表）
-
-**状态码映射表：**
-
-| `store-error-code` | gRPC status | REST | 触发 |
-|---|---|---|---|
-| `INVALID_PARAM` | `INVALID_ARGUMENT` | 400 | `params_json` 非法 JSON |
-| `INVALID_BODY` | `INVALID_ARGUMENT` | 400 | `body_json` / `set_json` 非对象或非法 JSON |
-| `GQL_PARSE` | `INVALID_ARGUMENT` | 400 | core 抛 `ERR_GQL_PARSE:`（details 剥前缀取原文） |
-| `CONTEXT_ERROR` | `UNAUTHENTICATED` | 401 | `contextProvider` 抛非权限类错误 |
-| `ERR_PERMISSION` | `PERMISSION_DENIED` | 403 | `PermissionError` 类 / `ERR_PERMISSION:` 前缀 |
-| `no_context` | `PERMISSION_DENIED` | 403 | 宿主 `NoContextError`（machine code `no_context`）/ core `ERR_NO_CONTEXT:` 前缀（requireContext 开启且 ctx 缺失，同属权限类） |
-| `NOT_FOUND` | `NOT_FOUND` | 404 | `queryOne` 空结果 |
-| `err.code` / 类名 | `INTERNAL` | 500 | 其余一切错误（码取 `err.code`，缺省类/类型名，再缺省 `STORE_ERROR`） |
-
-**判定顺序（双端一致；改动必须先改 spec）：**
-
-```
-适配层守卫（INVALID_PARAM / INVALID_BODY / NOT_FOUND / CONTEXT_ERROR）
-  -> PermissionError 类判定（store.PermissionError 可得时按类型，禁按文案匹配）
-  -> ERR_PERMISSION: 前缀判定（core 稳定前缀契约）
-  -> NoContext（machine code `no_context` / ERR_NO_CONTEXT: 前缀，权限类同档）-> PERMISSION_DENIED
-  -> ERR_GQL_PARSE: 前缀判定（details 剥前缀取原文）
-  -> 其余 -> INTERNAL 透传
-```
-
-**禁掩盖错误：**
-
-- store 抛出的 message **原样透传**进 details；取不到置空串——禁伪造文案。
-- 禁 catch 后洗成成功、禁回退默认值、禁把中性结果当错误。
-- 成功的 `StoreReply` 中不得出现错误字段（错误只经 gRPC status 通道）。
-
-**上下文（metadata 语义）：**
-
-- 请求元数据键名不做大小写改写（gRPC metadata 本身小写化，适配层原样交给 provider）。
-- 权限拒绝必须在**进 handler 语义之前**判定——`contextProvider` 抛错时 store 不发生调用（smoke 测试断言 `store.gqlLog.length` 不变）。
-
-## 场景事例
-
-每个场景遵循：**业务背景 → 调用 → 响应 → 优势所在。**
-
-### 场景 1——微服务间 CRUD
-
-**业务背景。** `billing` 服务需要读写 `accounts` 服务持有的 `User` 记录。两者都是内部服务，都不面向浏览器。与其另写一套 REST 客户端，`accounts` 直接从它已经注册的同一个 store 导出 `.proto`，`billing` 调用生成的 service。
-
-**调用。**
-
-```bash
-grpcurl -plaintext -proto store_grpc.proto \
-  -d '{"body_json": "{\"name\":\"bob\",\"age\":41}"}' \
-  accounts.internal:50051 store.v0.User/CreateUser
-
-grpcurl -plaintext -proto store_grpc.proto \
-  -d '{"id": "u2"}' \
-  accounts.internal:50051 store.v0.User/GetUser
-```
-
-**响应。**
-
-```json
-{"dataJson": "{\"_id\":\"u2\",\"name\":\"bob\",\"age\":41}"}
-```
-
-**优势所在。** 契约是 `.proto` 而不是 wiki 上的散文——`billing` 无法发送不存在的字段，且线路上是二进制载荷。服务端就是 accounts 的 REST/GraphQL 面所用的**同一个** store 实例，不存在第二条需要保持一致的数据路径。
-
-### 场景 2——一份 `.proto`、多语言客户端
-
-**业务背景。** 一个 Go 数据管道、一个 Java 批处理任务、一个 Node 看板都要查询 `User`。与其手写三套 HTTP 客户端，团队从单一产物生成客户端。
-
-**调用（先产出产物，再 codegen）。**
-
-```bash
-# Node：从 store 写出 .proto
-node -e "const {exportProto}=require('store-grpc-node');const fs=require('fs');\
-fs.writeFileSync('store_grpc.proto', exportProto(require('nodejs-store').store))"
-
-# 交给任意 protoc 插件 / 客户端生成器（Go、Java、Python、C++ ...）：
-protoc -I. --go_out=. --go-grpc_out=. store_grpc.proto
-```
-
-**响应。** 每个生成的客户端调用同一批 rpc：
-
-```
-store.v0.User/ListUser   store.v0.User/GetUser    store.v0.User/CreateUser
-store.v0.User/UpdateUser store.v0.User/DeleteUser
-```
-
-**优势所在。** `.proto` 是唯一的接口产物；你唯一要跑的就是 `exportProto` / `export_proto`，它和服务端序列化用的是**同一份文本**——客户端与服务端在 message 形状上永不会漂移。
-
-### 场景 3——长连接、高吞吐读
-
-**业务背景。** 一个读密集的看板每分钟轮询 `User` 上千次。每次轮询都新建 HTTP 连接会浪费握手。
-
-**调用。**
-
-```js
-// 进程存活期内复用同一个 grpc-js channel。
-const client = new Client(`127.0.0.1:${port}`, grpc.credentials.createInsecure());
-setInterval(() => {
-  client.ListUser({ q: ' { name, age }' }, (err, res) => { /* ... */ });
-}, 50);
-```
-
-**响应。** `{"dataJson":"[...]"}`——单条多路复用的 HTTP/2 流承载每一次调用。
-
-**优势所在。** gRPC 跨调用保持 channel（及 HTTP/2 连接）打开，用二进制帧在一条连接上多路复用并发请求——比每次轮询重建 HTTP、重新解析 JSON body 的每调用开销低得多。
-
-### 场景 4——独立端口 / 精选模型子集
-
-**业务背景。** 内部管理工具需要 `User` 与 `AuditEvent`，但公开 REST 面还暴露了 `Order`、`Payment`、`Cart`。团队不希望管理工具的 gRPC 端点到任何支付模型。
-
-**调用。**
-
-```js
-const { createServer } = require('store-grpc-node');
-// 此端口上只有这两个 service——从同一个 store 生成。
-await createServer(store, { resources: ['User', 'AuditEvent'], port: 50052 });
-```
-
-```bash
-grpcurl -plaintext -proto admin.proto -d '{}' 127.0.0.1:50052 store.v0.User/ListUser   # OK
-grpcurl -plaintext -proto admin.proto -d '{}' 127.0.0.1:50052 store.v0.Payment/ListPayment
-# ERROR: Code: Unimplemented ...
-```
-
-**响应。** `ListUser` 成功；`ListPayment` 返回 `UNIMPLEMENTED`，因为该 service 从未在此端口注册。
-
-**优势所在。** `resources` 按 server 精选生成的产物面，于是独立端口（或独立进程）可以只暴露消费者被允许看到的模型——无需第二份 schema，也不在 IDL 里泄漏无关模型名。
-
-### 场景 5——与 REST、GraphQL 并存
-
-**业务背景。** 一个平台给公开客户端提供 REST、给 Web 应用提供 GraphQL、给内部服务提供 gRPC——都跑在同一份 store 和同一份 schema 之上。
-
-**调用。**
-
-```js
-// store-gateway 声明式组合三层皮肤（对全部皮肤 optional 依赖，逐层 `enabled` 开关）：
-const { createGateway } = require('store-gateway');
-await createGateway(store, {
-  rest:     { enabled: true, port: 8080 },
-  graphql:  { enabled: true, port: 4000 },
-  grpc:     { enabled: true, port: 50051 },
-});
-```
-
-**响应。** 同一个 `User` 模型可通过 `GET /users?q=...`（REST）、GraphQL 字段（GraphQL）与 `store.v0.User/ListUser`（gRPC）访问——返回同样的记录。
-
-**优势所在。** 三层皮肤是零互相依赖的独立包，gateway 只做接线。你可以先上 REST 之后再加 gRPC 而不动 schema，或单独运行任意一层（gateway 是可选的）。
-
-### 场景 6——跨语言保持一致的错误语义
-
-**业务背景。** Go、Python、Node 三个调用方都对一个已删除记录调用 `GetUser`。每个都要能**程序化地**区分「不存在」「无权限」「服务端缺陷」——而不是去字符串匹配 message。
-
-**调用。**
-
-```bash
-grpcurl -v -plaintext -proto store_grpc.proto \
-  -d '{"id": "u1"}' 127.0.0.1:50051 store.v0.User/GetUser
-```
-
-**响应。**
-
-```
-ERROR:
-  Code: NotFound
-  Message: 记录不存在: _id=u1
-Trailers:
-  store-error-code: NOT_FOUND
-```
-
-**优势所在。** `status` 码是粗分类，`store-error-code` trailer 是稳定机器码，`details` 原样携带 message。三种语言看到相同的 `status` + trailer，于是调用方按码分支而非按本地化文案——且适配层绝不把 store 错误藏在一个笼统的「internal」后面（见[错误与上下文](#错误与上下文)码表）。
-
-### 场景 7——彻底隐藏内部模型
-
-**业务背景。** 模型 `SecretLog` 存有凭据材料，绝不能经 gRPC 触达（它在 store 中仍存在，供 REST 以另一套护栏访问）。
-
-**调用。**
-
-```js
-store.register({
-  name: 'SecretLog',
-  'x-grpc': { hidden: true },   // schema 级注记
-  fields: { /* ... */ },
-});
-```
-
-```bash
-grpcurl -plaintext -proto store_grpc.proto -d '{}' 127.0.0.1:50051 store.v0.SecretLog/ListSecretLog
-# ERROR: Code: Unimplemented ...  （service 从未生成）
-```
-
-**响应。** 导出的 `.proto` 中不存在 `service SecretLog`；该 rpc 为 `UNIMPLEMENTED`。
-
-**优势所在。** 暴露控制在 schema 层、与模型定义同处一处，且对每种语言、每份生成产物都一致——隐藏模型根本不会出现在 IDL 中。
-
-### 场景 8——只读模型
-
-**业务背景。** `AuditEvent` 仅由内部管道写入；读者需要经 gRPC 查询它，但绝不能经本面 create / update / delete。
-
-**调用。**
-
-```js
-store.register({
-  name: 'AuditEvent',
-  'x-grpc': { readonly: true },
-  fields: { _id: { type: 'string' }, actor: { type: 'string' }, at: { type: 'string' } },
-});
-```
-
-```bash
-grpcurl -plaintext -proto store_grpc.proto -d '{"q":" { actor }"}' \
-  127.0.0.1:50051 store.v0.AuditEvent/ListAuditEvent            # OK
-grpcurl -plaintext -proto store_grpc.proto -d '{"body_json":"{}"}' \
-  127.0.0.1:50051 store.v0.AuditEvent/CreateAuditEvent         # ERROR: Unimplemented
-```
-
-**响应。** 生成的 service 只含 `ListAuditEvent` 与 `GetAuditEvent`。
-
-**优势所在。** 只读访问在 schema 一次声明、在协议面强制——根本不存在可供误调的 `Create`/`Update`/`Delete` rpc，只读消费者无法经 gRPC 改动该表。
-
-## 与其它协议皮的关系
-
-`store-grpc` 是同一份 store 之上四层协议皮之一，外加一个组合器：
-
-| 皮肤 | 形态 | 包装 |
-|---|---|---|
-| [store-api](https://github.com/coenddt/store-api) | REST（HTTP 状态码 + JSON body） | REST |
-| [store-graphql](https://github.com/coenddt/store-graphql) | GraphQL SDL | GraphQL |
-| **store-grpc**（本仓库） | 每模型一个 gRPC service | gRPC |
-| store-mcp | MCP 工具面 | MCP |
-| [store-gateway](https://github.com/coenddt/store-gateway) | 声明式组合器 | — |
-
-- 各皮肤**架构独立**：独立仓库、独立包（npm / PyPI）、代码零互相依赖。唯一共享的是 store 实例（一份 JSON schema 事实源）与各自 skin 的 `spec/` + `conformance/`。
-- 各皮肤经 `store-gateway` **可配置插拔组合**（对全部皮肤 optional 依赖，逐层 `enabled` 开关）。单用某层皮肤时完全不需要 gateway。
-- 映射血缘：gRPC 的 `q` 与 REST `?q=` 完全同源；service/rpc 命名对齐 GraphQL 的「每模型一类型」视角；`x-grpc` 注记与 `x-graphql` 对齐；错误码表与 REST 相同。
-
-## v0 范围与路线
-
-**v0（现状，`0.2.1`）：**
-
-- 运行时：Node（`store-grpc-node`）+ Python（`store-grpc-py`）。
-- 每模型五段 CRUD rpc（`List` / `Get` / `Create` / `Update` / `Delete`），仅 unary。
-- JSON string 承载（入参 `q` + `params_json`，出参 `data_json`）。
-- proto-first：`buildProto` / `exportProto`（及 Python 同名出口），运行时用同一份文本序列化；零生成代码落盘。
-- 错误映射：gRPC status + details + `store-error-code` trailer。
-- 上下文经 metadata（`contextProvider` / `context_provider`），含显式 `setContext(null)` 清除。
-- schema 级 `x-grpc` 注记：`hidden`、`readonly`；归档表过滤；PascalCase 冲突守卫。
-
-**路线：**
-
-- **v1**——`go` / `rust` 宿主；schema 反射逐字段强类型 message；可选 server reflection（`grpcurl` 免 `.proto` 文件）。
-- 流式 rpc（`requestStream` / `responseStream`）不在 v0——每个 rpc 都是 unary。
-
-**spec 边界：** 行为由 `spec/00-overview.md`、`spec/01-proto-generation.md`、`spec/02-execution-mapping.md`、`spec/03-errors-context.md` 定义。规范 / 代码 / conformance 用例必须一致；不一致即为缺陷。
-
-## FAQ
-
-1. **客户端需要 `.proto` 文件吗？** 需要。gRPC 是静态 IDL 协议，服务端必须发布契约。用 `exportProto` / `export_proto` 取到它。v0 没有 server reflection，因此 `grpcurl` 必须传 `-proto store_grpc.proto`。
-2. **为什么用 JSON string 而不是强类型 message？** 这是记录在 `spec/01` 里的 v0 决策：GQL 查询串与 params 本就是动态 JSON，用 string 承载零歧义、跨端 parity 成本最低。强类型 message 是 v1 项，须先改 spec。
-3. **有行数守卫吗（像 GraphQL 的 50/1000）？** 没有。GraphQL 的守卫属其 spec；REST 与 gRPC 的 `q` 透传不做行数守卫（core 的行数封顶在 text2query 档）。本皮肤与 REST 对齐。
-4. **怎么拿到新建记录的 id？** 从 `Create*` 响应的 `data_json`（插入的文档，含 `_id`）。
-5. **`Get` 无匹配时返回什么？** `NOT_FOUND`：status 为 `NOT_FOUND`、`store-error-code: NOT_FOUND`、details 形如 `记录不存在: _id=u1`。它绝不返回空成功。
-6. **`Update` 会二次回读记录吗？** 不会。它返回 `store.update` 的原始返回值，对齐 REST `PATCH`（`spec/02`）——没有第二次读。
-7. **身份 / 鉴权怎么传？** 经请求 metadata，由你的 `contextProvider` / `context_provider` 转换为经 `store.setContext` 注入的上下文。返回 `null` 显式清除上下文。权限类错误变为 `PERMISSION_DENIED`；其余钩子错误变为 `UNAUTHENTICATED`。
-8. **为什么 Python 里字段是 `data_json`、Node 里却是 `dataJson`？** `.proto` 字段是 `snake_case`；protobufjs 暴露 camelCase JS 属性，`_pb2` 保留 snake_case，Go codegen 用 PascalCase。这是显式声明的语言惯例（`spec/01`），非 parity 缺陷——按目标语言惯例访问字段。
-9. **能只暴露部分模型，或放到独立端口吗？** 可以。传 `resources: ['User', 'Order']`（Python 为 `resources=[...]`）和/或不同 `port`；列表外的模型不生成，其 rpc 返回 `UNIMPLEMENTED`。
-10. **两个模型名首字母大写后冲突怎么办？** 生成期抛前缀为 `ERR_NAME_CONFLICT:` 的错误；绝不静默合并。
-11. **支持流式吗？** v0 不支持——每个 rpc 都是 unary（`requestStream: false`、`responseStream: false`）。流式在路线图上。
-12. **需要装 `protoc` 吗？** 不需要。Node 用 `protobufjs`（无 `protoc`）；Python 用 `grpcio-tools`，它在运行时进程内跑 `protoc`——你从不调用它。`buildProto` / `exportProto`（及 Python 同名出口）在完全没装 gRPC 库时也可用。
-
-## 开发
-
-```bash
-# Node（mock store + 真实 @grpc/grpc-js server）——跑 smoke、error-matrix、conformance 三套
-cd node && npm i && npm test
-
-# Python（mock store + 真实 grpcio server）
-cd py && pip install -e ".[dev]" && pytest
-```
-
-- Node 测试：`node --test` 跑 `node/test/*.test.js`（`smoke`、`error-matrix`、`conformance`）。
-- Python 测试：`pytest` 跑 `py/tests/`（`test_smoke`、`test_error_matrix`、`test_conformance`）。
-- 双端 runner 执行同一份 `conformance/cases/*.json`（`users-crud` 用例有 10 个步骤），断言行为逐项一致。
-- `proto round-trip` 用例把导出文本落盘后再解析 / 再编译，证明该导出是合法 `.proto`。
-
-贡献规则：**先改 `spec/`，再双端同步实现，最后补 / 改 conformance 用例。** 规范 / 代码 / 用例不一致即为缺陷。
-
-## 相关项目
-
-- [store-api](https://github.com/coenddt/store-api)——REST 皮肤。
-- [store-graphql](https://github.com/coenddt/store-graphql)——GraphQL 皮肤。
-- [store-gateway](https://github.com/coenddt/store-gateway)——各皮肤的声明式组合器。
-- store-mcp——MCP 工具皮肤。
-- nodejs-store / py-store / go-store / rust-store——数据层家族（宿主 + Rust core）。
-- meta-store、create-store-app、store-rbac-bootstrap、store-resource-bootstrap——控制面、脚手架与引导插件。
-
-## License
-
-MIT——见 [LICENSE](./LICENSE)。
+MIT —— 见 [LICENSE](./LICENSE)。

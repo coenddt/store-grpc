@@ -11,7 +11,7 @@ Chinese docs: [README.zh-CN.md](./README.zh-CN.md) · Behaviour contract: [`spec
 
 - Two runtimes, one contract: `store-grpc-node` (npm) and `store-grpc-py` (PyPI).
 - The `.proto` is emitted from memory; the server registers the same text it exports.
-- Node ≥ 18, Python ≥ 3.10; current release `0.2.3`.
+- Node ≥ 18, Python ≥ 3.10; current release `0.2.4`.
 
 ## Suppose the contract is a file in git
 
@@ -79,17 +79,17 @@ A gRPC error has three parts: a `status` code, `details` carrying the store's or
 | `CONTEXT_ERROR` | `UNAUTHENTICATED` | 401 | the context hook throws a non-permission error |
 | `ERR_PERMISSION` / permission class name | `PERMISSION_DENIED` | 403 | `PermissionError` type or the stable `ERR_PERMISSION:` prefix |
 | `no_context` | `PERMISSION_DENIED` | 403 | host `NoContextError` or the `ERR_NO_CONTEXT:` prefix |
-| `NOT_FOUND` | `NOT_FOUND` | 404 | `queryOne` returned nothing |
+| `NOT_FOUND` / `ERR_NOT_FOUND` | `NOT_FOUND` | 404 | `queryOne` returned nothing, or the host/core raised `ERR_NOT_FOUND` (via `err.code` or the `ERR_NOT_FOUND:` prefix); the original message travels unchanged |
 | `err.code` / class name | `INTERNAL` | 500 | everything else, message passed through |
 
-The decision order is identical in both runtimes: adapter guards, then the `PermissionError` type check (never message matching), then the `ERR_PERMISSION:` prefix, then `no_context` / `ERR_NO_CONTEXT:`, then `ERR_GQL_PARSE:`, then the default `INTERNAL` bucket.
+The decision order is identical in both runtimes: adapter guards, then `NOT_FOUND` / `ERR_NOT_FOUND`, then `INVALID_PARAM` / `INVALID_BODY`, then `CONTEXT_ERROR`, then the `PermissionError` type check (never message matching), then the `ERR_PERMISSION:` prefix, then `no_context` / `ERR_NO_CONTEXT:`, then `ERR_GQL_PARSE:`, then the default `INTERNAL` bucket.
 
 The skin does not collapse the store's three outcomes into a single auth failure:
 
 | What happened | What this skin returns |
 |---|---|
 | the call is permitted | `StoreReply.data_json`; no error field exists in a successful reply |
-| the row is missing | `Get` returns `NOT_FOUND` + `store-error-code: NOT_FOUND`; the core's write-probe `ERR_NOT_FOUND:` is never folded into a permission denial — spec/03 defines no dedicated row for it, so it lands in the documented default `INTERNAL` bucket with its message intact |
+| the row is missing | `Get` returns `NOT_FOUND` + `store-error-code: NOT_FOUND`; a host/core `ERR_NOT_FOUND` (code or `ERR_NOT_FOUND:` prefix) maps to the same status with its message intact — it is never folded into a permission denial, and never collapsed into `INTERNAL` |
 | the row exists but the caller may not touch it | `PERMISSION_DENIED`, carrying the store's original permission wording, not re-wrapped into new text |
 
 Identity travels as request metadata, not ambient state. `contextProvider` (Node) / `context_provider` (Python) receives this call's metadata and its return value is injected through `store.setContext(ctx)`. Returning `null` / `None` still injects explicitly, so a stateful runtime cannot leak the previous request's identity. A permission rejection is decided before the handler's semantics run: when the hook throws, the store is never called. A permission error becomes `PERMISSION_DENIED`; any other hook failure becomes `UNAUTHENTICATED` with the original message.
