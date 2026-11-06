@@ -177,8 +177,9 @@ function mapStoreError(err, PermissionErrorClass, grpc) {
     if (code) metadata.set('store-error-code', code);
     return { code: status, details: details != null ? details : '', metadata };
   };
-  if (err && err.code === 'NOT_FOUND') {
-    return fail(grpc.status.NOT_FOUND, err.code, err.message);
+  if (err && (err.code === 'NOT_FOUND' || err.code === 'ERR_NOT_FOUND'
+    || (typeof err.message === 'string' && err.message.startsWith('ERR_NOT_FOUND:')))) {
+    return fail(grpc.status.NOT_FOUND, 'NOT_FOUND', err.message);
   }
   if (err && (err.code === 'INVALID_PARAM' || err.code === 'INVALID_BODY')) {
     return fail(grpc.status.INVALID_ARGUMENT, err.code, err.message);

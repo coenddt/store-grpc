@@ -9,6 +9,7 @@ from grpc import StatusCode
 ERR_GQL_PARSE_PREFIX = "ERR_GQL_PARSE:"
 ERR_PERMISSION_PREFIX = "ERR_PERMISSION:"
 ERR_NO_CONTEXT_PREFIX = "ERR_NO_CONTEXT:"
+ERR_NOT_FOUND_PREFIX = "ERR_NOT_FOUND:"
 
 GUARD_CODES_INVALID = ("INVALID_PARAM", "INVALID_BODY")
 
@@ -93,6 +94,9 @@ def map_store_error(err: BaseException, permission_error: type[BaseException] | 
         if err.code == "CONTEXT_ERROR":
             return fail(StatusCode.UNAUTHENTICATED, err.code, err.args[0])
         return fail(StatusCode.INVALID_ARGUMENT, err.code, err.args[0])
+
+    if getattr(err, "code", None) in ("NOT_FOUND", "ERR_NOT_FOUND") or message.startswith(ERR_NOT_FOUND_PREFIX):
+        return fail(StatusCode.NOT_FOUND, "NOT_FOUND", message)
 
     if permission_error is not None and isinstance(err, permission_error):
         return fail(StatusCode.PERMISSION_DENIED, store_code(err), message)

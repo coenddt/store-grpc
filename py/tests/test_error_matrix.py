@@ -41,6 +41,20 @@ def test_matrix_no_context_prefix_to_permission_denied():
     assert r.code == "no_context"
 
 
+def test_matrix_not_found_code_to_not_found():
+    r = map_store_error(_err("行不存在", "ERR_NOT_FOUND"), PermissionError)
+    assert r.status == STATUS.NOT_FOUND
+    assert r.code == "NOT_FOUND"
+    assert r.details == "行不存在"
+
+
+def test_matrix_not_found_prefix_to_not_found():
+    r = map_store_error(Exception("ERR_NOT_FOUND:行不存在"), PermissionError)
+    assert r.status == STATUS.NOT_FOUND
+    assert r.code == "NOT_FOUND"
+    assert r.details == "ERR_NOT_FOUND:行不存在"
+
+
 def test_matrix_other_to_internal():
     r = map_store_error(Exception("数据库连接失败"), PermissionError)
     assert r.status == STATUS.INTERNAL

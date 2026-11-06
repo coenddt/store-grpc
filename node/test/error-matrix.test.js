@@ -41,6 +41,22 @@ test('映射矩阵：NoContext 档（字符串通道前缀 ERR_NO_CONTEXT:）→
   assert.equal(r.metadata.get('store-error-code')[0], 'no_context');
 });
 
+test('映射矩阵：NotFound 档（machine code ERR_NOT_FOUND）→ NOT_FOUND', () => {
+  const err = new Error('行不存在');
+  err.code = 'ERR_NOT_FOUND';
+  const r = mapStoreError(err, PermissionError, grpc);
+  assert.equal(r.code, grpc.status.NOT_FOUND);
+  assert.equal(r.metadata.get('store-error-code')[0], 'NOT_FOUND');
+  assert.equal(r.details, '行不存在');
+});
+
+test('映射矩阵：NotFound 档（字符串通道前缀 ERR_NOT_FOUND:）→ NOT_FOUND，details 保留前缀', () => {
+  const r = mapStoreError(new Error('ERR_NOT_FOUND:行不存在'), PermissionError, grpc);
+  assert.equal(r.code, grpc.status.NOT_FOUND);
+  assert.equal(r.metadata.get('store-error-code')[0], 'NOT_FOUND');
+  assert.equal(r.details, 'ERR_NOT_FOUND:行不存在');
+});
+
 test('映射矩阵：Other 档 → INTERNAL 透传原文（禁静默）', () => {
   const r = mapStoreError(new Error('数据库连接失败'), PermissionError, grpc);
   assert.equal(r.code, grpc.status.INTERNAL);
