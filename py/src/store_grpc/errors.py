@@ -99,7 +99,8 @@ def map_store_error(err: BaseException, permission_error: type[BaseException] | 
         return fail(StatusCode.NOT_FOUND, "NOT_FOUND", message)
 
     if permission_error is not None and isinstance(err, permission_error):
-        return fail(StatusCode.PERMISSION_DENIED, store_code(err), message)
+        # spec/03：类型化 PermissionError 的 trailer 机器码统一 ERR_PERMISSION（details 保留原 message）
+        return fail(StatusCode.PERMISSION_DENIED, "ERR_PERMISSION", message)
 
     if message.startswith(ERR_PERMISSION_PREFIX):
         return fail(StatusCode.PERMISSION_DENIED, "ERR_PERMISSION", message)

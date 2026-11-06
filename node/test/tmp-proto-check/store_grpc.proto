@@ -4,7 +4,7 @@ syntax = "proto3";
 package store.v0;
 
 message ListRequest {
-  string q = 1;           // 完整 GQL 查询串（自模型名始）；空串 ⇒ 服务端补 schema 投影
+  string q = 1;           // GQL 查询串（模型名之后的投影/条件段，服务端前置模型名）；空串 ⇒ 服务端补 schema 投影
   string params_json = 2; // GQL params（如 {"c0":{"age":{"$gte":18}}}）的 JSON 编码
 }
 
@@ -20,7 +20,7 @@ message StoreReply     { string data_json = 1; }
 
 // 用户表：平台账号主档
 service User {
-  // 列表查询：q 为完整 GQL 查询串（自模型名始，与 REST ?q= 同源）；空串 ⇒ 服务端按 schema 投影
+  // 列表查询：q 为模型名之后的 GQL 段（服务端前置模型名，与 REST ?q= 同源）；空串 ⇒ 服务端按 schema 投影
   rpc ListUser (ListRequest) returns (StoreReply);
   // 单条查询：按 id_field 精确匹配；无记录 ⇒ NOT_FOUND
   rpc GetUser (GetRequest) returns (StoreReply);

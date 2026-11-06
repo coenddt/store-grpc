@@ -40,7 +40,7 @@ function schemaProjection(store, name) {
 // ── spec/01：proto 文本生成 ──
 
 const COMMON_MESSAGES = `message ListRequest {
-  string q = 1;           // 完整 GQL 查询串（自模型名始）；空串 ⇒ 服务端补 schema 投影
+  string q = 1;           // GQL 查询串（模型名之后的投影/条件段，服务端前置模型名）；空串 ⇒ 服务端补 schema 投影
   string params_json = 2; // GQL params（如 {"c0":{"age":{"$gte":18}}}）的 JSON 编码
 }
 
@@ -56,7 +56,7 @@ message StoreReply     { string data_json = 1; }
 `;
 
 const RPC_COMMENTS = {
-  list: '列表查询：q 为完整 GQL 查询串（自模型名始，与 REST ?q= 同源）；空串 ⇒ 服务端按 schema 投影',
+  list: '列表查询：q 为模型名之后的 GQL 段（服务端前置模型名，与 REST ?q= 同源）；空串 ⇒ 服务端按 schema 投影',
   get: '单条查询：按 id_field 精确匹配；无记录 ⇒ NOT_FOUND',
   create: '插入：body_json 必须为 JSON 对象编码',
   update: '按 id_field 定位后部分更新：set_json 必须为 JSON 对象编码；返回 store.update 原始结果',
@@ -188,7 +188,8 @@ function mapStoreError(err, PermissionErrorClass, grpc) {
     return fail(grpc.status.UNAUTHENTICATED, 'CONTEXT_ERROR', err.message);
   }
   if (PermissionErrorClass && err instanceof PermissionErrorClass) {
-    return fail(grpc.status.PERMISSION_DENIED, storeCode(err), err.message);
+    // spec/03：类型化 PermissionError 的 trailer 机器码统一 ERR_PERMISSION（details 保留原 message）
+    return fail(grpc.status.PERMISSION_DENIED, 'ERR_PERMISSION', err.message);
   }
   if (err && typeof err.message === 'string' && err.message.startsWith('ERR_PERMISSION:')) {
     return fail(grpc.status.PERMISSION_DENIED, 'ERR_PERMISSION', err.message);
