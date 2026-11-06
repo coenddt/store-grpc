@@ -247,7 +247,7 @@ def test_error_mapping(h):
     assert r["error"].code() == STATUS.PERMISSION_DENIED
     assert dict(r["error"].trailing_metadata())["store-error-code"] == "ERR_PERMISSION"
 
-    # PermissionError 类（store.PermissionError 来源）⇒ PERMISSION_DENIED，码取 store_code
+    # PermissionError 类（store.PermissionError 来源）⇒ PERMISSION_DENIED，trailer 机器码按 spec 统一 ERR_PERMISSION
 
     def deny_class(gql, params=None):
         raise PermissionErrorMock("RBAC 拒绝")
@@ -255,7 +255,7 @@ def test_error_mapping(h):
     store.query = deny_class
     r = call("ListUser", pb.ListRequest())
     assert r["error"].code() == STATUS.PERMISSION_DENIED
-    assert dict(r["error"].trailing_metadata())["store-error-code"] == "PermissionErrorMock"
+    assert dict(r["error"].trailing_metadata())["store-error-code"] == "ERR_PERMISSION"
 
     # 其余 store 错误 ⇒ INTERNAL，message 原样透传（禁掩盖）
 

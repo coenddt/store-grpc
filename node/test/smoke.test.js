@@ -133,6 +133,9 @@ test('buildProto：生成面 / 命名 / description 透传（spec/01）', () => 
   assert.match(proto, /rpc UpdateUser \(UpdateRequest\) returns \(StoreReply\);/);
   assert.match(proto, /rpc DeleteUser \(DeleteRequest\) returns \(StoreReply\);/);
   assert.match(proto, /\/\/ 用户表：平台账号主档/); // description 透传（spec/01）
+  // spec/02：q 是模型名之后的 GQL 余部（服务端前置模型名），注释须与实现/规范一致
+  assert.match(proto, /模型名之后/);
+  assert.doesNotMatch(proto, /自模型名始/);
   assert.equal(exportProto(store), proto); // exportProto ≡ buildProto（spec/01）
 });
 
@@ -230,11 +233,11 @@ test('错误映射：INVALID_BODY / INVALID_PARAM / GQL_PARSE / PERMISSION / INT
     assert.equal(denied.error.code, grpc.status.PERMISSION_DENIED);
     assert.equal(denied.trailer.get('store-error-code')[0], 'ERR_PERMISSION');
 
-    // PermissionError 类（store.PermissionError 来源）⇒ PERMISSION_DENIED，码取 storeCode
+    // PermissionError 类（store.PermissionError 来源）⇒ PERMISSION_DENIED，trailer 机器码按 spec 统一 ERR_PERMISSION
     store.query = async () => { throw new store.PermissionError('RBAC 拒绝'); };
     const byClass = await h.call('ListUser', {});
     assert.equal(byClass.error.code, grpc.status.PERMISSION_DENIED);
-    assert.equal(byClass.trailer.get('store-error-code')[0], 'PermissionError');
+    assert.equal(byClass.trailer.get('store-error-code')[0], 'ERR_PERMISSION');
 
     // 其余 store 错误 ⇒ INTERNAL，message 原样透传（禁掩盖）
     store.query = async () => { throw new Error('数据库连接失败'); };

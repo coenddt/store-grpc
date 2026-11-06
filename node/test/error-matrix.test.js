@@ -24,7 +24,7 @@ test('映射矩阵：Permission 档 → PERMISSION_DENIED', () => {
   const err = new PermissionError('RBAC 拒绝');
   const r = mapStoreError(err, PermissionError, grpc);
   assert.equal(r.code, grpc.status.PERMISSION_DENIED);
-  assert.equal(r.metadata.get('store-error-code')[0], 'PermissionError');
+  assert.equal(r.metadata.get('store-error-code')[0], 'ERR_PERMISSION');
 });
 
 test('映射矩阵：NoContext 档（machine code no_context）→ PERMISSION_DENIED', () => {
