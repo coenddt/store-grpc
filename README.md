@@ -11,7 +11,7 @@ Chinese docs: [README.zh-CN.md](./README.zh-CN.md) · Behaviour contract: [`spec
 
 - Two runtimes, one contract: `store-grpc-node` (npm) and `store-grpc-py` (PyPI).
 - The `.proto` is emitted from memory; the server registers the same text it exports.
-- Node ≥ 18, Python ≥ 3.10; current release `0.2.4`.
+- Node ≥ 18, Python ≥ 3.10; current release `0.2.5`.
 
 ## Suppose the contract is a file in git
 

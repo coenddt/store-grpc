@@ -11,7 +11,7 @@
 
 - 两个运行时，一份契约：`store-grpc-node`（npm）与 `store-grpc-py`（PyPI）。
 - `.proto` 从内存生成；服务器注册的就是它导出的那份文本。
-- Node ≥ 18，Python ≥ 3.10；当前发布 `0.2.4`。
+- Node ≥ 18，Python ≥ 3.10；当前发布 `0.2.5`。
 
 ## 假设契约是 git 里的一个文件
 
