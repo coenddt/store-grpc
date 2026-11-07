@@ -57,6 +57,13 @@ test('映射矩阵：NotFound 档（字符串通道前缀 ERR_NOT_FOUND:）→ N
   assert.equal(r.details, 'ERR_NOT_FOUND:行不存在');
 });
 
+test('映射矩阵：资源无副本档（字符串通道前缀 ERR_RESOURCE_NOT_FOUND:）→ NOT_FOUND，details 剥前缀', () => {
+  const r = mapStoreError(new Error('ERR_RESOURCE_NOT_FOUND:资源无任何可读副本'), PermissionError, grpc);
+  assert.equal(r.code, grpc.status.NOT_FOUND);
+  assert.equal(r.metadata.get('store-error-code')[0], 'NOT_FOUND');
+  assert.equal(r.details, '资源无任何可读副本');
+});
+
 test('映射矩阵：Other 档 → INTERNAL 透传原文（禁静默）', () => {
   const r = mapStoreError(new Error('数据库连接失败'), PermissionError, grpc);
   assert.equal(r.code, grpc.status.INTERNAL);

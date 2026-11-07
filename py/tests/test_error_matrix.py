@@ -55,6 +55,14 @@ def test_matrix_not_found_prefix_to_not_found():
     assert r.details == "ERR_NOT_FOUND:行不存在"
 
 
+def test_matrix_resource_not_found_prefix_to_not_found():
+    """第二轮：资源无任何可读副本 ⇒ NOT_FOUND，details 剥前缀（对齐 REST spec/03）。"""
+    r = map_store_error(Exception("ERR_RESOURCE_NOT_FOUND:资源无任何可读副本"), PermissionError)
+    assert r.status == STATUS.NOT_FOUND
+    assert r.code == "NOT_FOUND"
+    assert r.details == "资源无任何可读副本"
+
+
 def test_matrix_other_to_internal():
     r = map_store_error(Exception("数据库连接失败"), PermissionError)
     assert r.status == STATUS.INTERNAL

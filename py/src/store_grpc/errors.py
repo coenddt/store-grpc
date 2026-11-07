@@ -10,6 +10,7 @@ ERR_GQL_PARSE_PREFIX = "ERR_GQL_PARSE:"
 ERR_PERMISSION_PREFIX = "ERR_PERMISSION:"
 ERR_NO_CONTEXT_PREFIX = "ERR_NO_CONTEXT:"
 ERR_NOT_FOUND_PREFIX = "ERR_NOT_FOUND:"
+ERR_RESOURCE_NOT_FOUND_PREFIX = "ERR_RESOURCE_NOT_FOUND:"
 
 GUARD_CODES_INVALID = ("INVALID_PARAM", "INVALID_BODY")
 
@@ -94,6 +95,15 @@ def map_store_error(err: BaseException, permission_error: type[BaseException] | 
         if err.code == "CONTEXT_ERROR":
             return fail(StatusCode.UNAUTHENTICATED, err.code, err.args[0])
         return fail(StatusCode.INVALID_ARGUMENT, err.code, err.args[0])
+
+    # spec/03：资源无任何可读副本（core 稳定前缀 ERR_RESOURCE_NOT_FOUND:）⇒ NOT_FOUND，
+    # details 剥前缀取 core 原文（与 REST spec/03 同口径）；必须先于 ERR_NOT_FOUND 判定。
+    if message.startswith(ERR_RESOURCE_NOT_FOUND_PREFIX):
+        return fail(
+            StatusCode.NOT_FOUND,
+            "NOT_FOUND",
+            message[len(ERR_RESOURCE_NOT_FOUND_PREFIX):],
+        )
 
     if getattr(err, "code", None) in ("NOT_FOUND", "ERR_NOT_FOUND") or message.startswith(ERR_NOT_FOUND_PREFIX):
         return fail(StatusCode.NOT_FOUND, "NOT_FOUND", message)

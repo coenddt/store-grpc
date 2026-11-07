@@ -18,13 +18,14 @@ REST 的错误是 HTTP 状态码 + JSON body；gRPC 的错误承载为三件套�
 | `CONTEXT_ERROR` | `UNAUTHENTICATED` | 401 | contextProvider 非权限类抛错 |
 | `ERR_PERMISSION` | `PERMISSION_DENIED` | 403 | PermissionError 类 / `ERR_PERMISSION:` 前缀 |
 | `no_context` | `PERMISSION_DENIED` | 403 | host `NoContextError`（machine code `no_context`）/ core `ERR_NO_CONTEXT:` 前缀（requireContext 开启且 ctx 缺失，与 PermissionError 同属权限类） |
-| `NOT_FOUND` | `NOT_FOUND` | 404 | 适配层 queryOne 空结果；或宿主/core 抛 `ERR_NOT_FOUND`（`err.code` 或消息前缀 `ERR_NOT_FOUND:`，details 原样透传不剥前缀） |
+| `NOT_FOUND` | `NOT_FOUND` | 404 | 适配层 queryOne 空结果；或宿主/core 抛 `ERR_NOT_FOUND`（`err.code` 或消息前缀 `ERR_NOT_FOUND:`，details 原样透传不剥前缀）；或资源无任何可读副本（core 稳定前缀 `ERR_RESOURCE_NOT_FOUND:`，details **剥前缀**取 core 原文，与 REST spec/03 同口径） |
 | err.code / 类名 | `INTERNAL` | 500 | 其余一切错误（码取 err.code，缺省类名，再缺省 `STORE_ERROR`） |
 
 ## 判定顺序（双端一致，改动必须先改本 spec）
 
 ```
 适配层守卫（INVALID_PARAM / INVALID_BODY / NOT_FOUND / CONTEXT_ERROR）
+  → ERR_RESOURCE_NOT_FOUND: 前缀（资源无任何可读副本）→ NOT_FOUND，details 剥前缀
   → ERR_NOT_FOUND（machine code `ERR_NOT_FOUND` / 前缀 `ERR_NOT_FOUND:`）→ NOT_FOUND，details 原样
   → PermissionError 类判定（store.PermissionError 可得时按类型，禁按文案匹配）
   → ERR_PERMISSION: 前缀判定（core 稳定前缀契约）

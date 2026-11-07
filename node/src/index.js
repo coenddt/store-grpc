@@ -177,6 +177,11 @@ function mapStoreError(err, PermissionErrorClass, grpc) {
     if (code) metadata.set('store-error-code', code);
     return { code: status, details: details != null ? details : '', metadata };
   };
+  // spec/03：资源无任何可读副本（core 稳定前缀 ERR_RESOURCE_NOT_FOUND:）⇒ NOT_FOUND，
+  // details 剥前缀取 core 原文（与 REST spec/03 同口径）；必须先于 ERR_NOT_FOUND 判定。
+  if (err && typeof err.message === 'string' && err.message.startsWith('ERR_RESOURCE_NOT_FOUND:')) {
+    return fail(grpc.status.NOT_FOUND, 'NOT_FOUND', err.message.slice('ERR_RESOURCE_NOT_FOUND:'.length));
+  }
   if (err && (err.code === 'NOT_FOUND' || err.code === 'ERR_NOT_FOUND'
     || (typeof err.message === 'string' && err.message.startsWith('ERR_NOT_FOUND:')))) {
     return fail(grpc.status.NOT_FOUND, 'NOT_FOUND', err.message);
