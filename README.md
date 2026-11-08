@@ -11,7 +11,7 @@
 
 - 两个运行时，一份契约：`store-grpc-node`（npm）与 `store-grpc-py`（PyPI）。
 - `.proto` 从内存生成；服务器注册的就是它导出的那份文本。
-- Node ≥ 18，Python ≥ 3.10；当前发布 `0.2.5`。
+- Node ≥ 18，Python ≥ 3.10；当前发布 `1.0.0`。
 
 ## 假设契约是 git 里的一个文件
 
@@ -83,10 +83,13 @@ v0 把动态数据装成 JSON 字符串：进 `q` + `params_json`，出 `data_js
 | `CONTEXT_ERROR` | `UNAUTHENTICATED` | 401 | context hook 抛非权限错误 |
 | `ERR_PERMISSION` / 权限类名 | `PERMISSION_DENIED` | 403 | `PermissionError` 类型或稳定前缀 `ERR_PERMISSION:` |
 | `no_context` | `PERMISSION_DENIED` | 403 | 宿主 `NoContextError` 或 `ERR_NO_CONTEXT:` 前缀 |
-| `NOT_FOUND` | `NOT_FOUND` | 404 | `queryOne` 返回空；或宿主/core 抛 `ERR_NOT_FOUND` / `ERR_NOT_FOUND:` |
+| `NOT_FOUND` | `NOT_FOUND` | 404 | `queryOne` 返回空；或宿主/core 抛 `ERR_NOT_FOUND` / `ERR_NOT_FOUND:` / `ERR_RESOURCE_NOT_FOUND:`（details 剥前缀） |
 | `err.code` / 类名 | `INTERNAL` | 500 | 其余一切，message 原样透传 |
 
-判定顺序在两个运行时完全一致：适配器守卫 → `PermissionError` 类型判定（绝不按文案匹配）→ `ERR_PERMISSION:` 前缀 → `no_context` / `ERR_NO_CONTEXT:` → `ERR_GQL_PARSE:` → 默认 `INTERNAL` 桶。
+判定顺序在两个运行时完全一致：适配器守卫 → `PermissionError` 类型判定（绝不按文案匹配）→ `ERR_PERMISSION:` 前缀 → `no_context` / `ERR_NO_CONTEXT:` → `ERR_RESOURCE_NOT_FOUND:`（先于 `ERR_NOT_FOUND:`）→ `ERR_NOT_FOUND:` → `ERR_GQL_PARSE:` → 默认 `INTERNAL` 桶。
+
+**1.0.0 变化**：`ERR_RESOURCE_NOT_FOUND:` 此前无分支，落 `INTERNAL`；现收敛为 `NOT_FOUND`（`details` 剥前缀）。
+把 `INTERNAL` 当「服务端故障 / 可重试」的客户端需改按 `NOT_FOUND` 处理。
 
 这层皮肤不把 store 的三种结果压成同一种鉴权失败：
 

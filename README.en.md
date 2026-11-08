@@ -11,7 +11,7 @@
 
 - Two runtimes, one contract: `store-grpc-node` (npm) and `store-grpc-py` (PyPI).
 - The `.proto` is emitted from memory; the server registers the same text it exports.
-- Node ≥ 18, Python ≥ 3.10; current release `0.2.5`.
+- Node ≥ 18, Python ≥ 3.10; current release `1.0.0`.
 
 ## Suppose the contract is a file in git
 
@@ -81,10 +81,12 @@ There is also a `store-error-code-normalized` trailer carrying the normalized ma
 | `CONTEXT_ERROR` | `UNAUTHENTICATED` | 401 | the context hook throws a non-permission error |
 | `ERR_PERMISSION` / permission class name | `PERMISSION_DENIED` | 403 | `PermissionError` type or the stable `ERR_PERMISSION:` prefix |
 | `no_context` | `PERMISSION_DENIED` | 403 | host `NoContextError` or the `ERR_NO_CONTEXT:` prefix |
-| `NOT_FOUND` / `ERR_NOT_FOUND` | `NOT_FOUND` | 404 | `queryOne` returned nothing, or the host/core raised `ERR_NOT_FOUND` (via `err.code` or the `ERR_NOT_FOUND:` prefix); the original message travels unchanged |
+| `NOT_FOUND` / `ERR_NOT_FOUND` / `ERR_RESOURCE_NOT_FOUND` | `NOT_FOUND` | 404 | `queryOne` returned nothing, or the host/core raised `ERR_NOT_FOUND` / `ERR_RESOURCE_NOT_FOUND` (via `err.code` or the `ERR_…:` prefix, stripped from details); the original message travels unchanged |
 | `err.code` / class name | `INTERNAL` | 500 | everything else, message passed through |
 
-The decision order is identical in both runtimes: adapter guards, then `NOT_FOUND` / `ERR_NOT_FOUND`, then `INVALID_PARAM` / `INVALID_BODY`, then `CONTEXT_ERROR`, then the `PermissionError` type check (never message matching), then the `ERR_PERMISSION:` prefix, then `no_context` / `ERR_NO_CONTEXT:`, then `ERR_GQL_PARSE:`, then the default `INTERNAL` bucket.
+The decision order is identical in both runtimes: adapter guards, then `NOT_FOUND` / `ERR_NOT_FOUND`, then `INVALID_PARAM` / `INVALID_BODY`, then `CONTEXT_ERROR`, then the `PermissionError` type check (never message matching), then the `ERR_PERMISSION:` prefix, then `no_context` / `ERR_NO_CONTEXT:`, then `ERR_RESOURCE_NOT_FOUND:` (before `ERR_NOT_FOUND:`), then `ERR_NOT_FOUND:`, then `ERR_GQL_PARSE:`, then the default `INTERNAL` bucket.
+
+**What changed in 1.0.0**: `ERR_RESOURCE_NOT_FOUND:` had no branch and fell into `INTERNAL`; it now maps to `NOT_FOUND` with the prefix stripped from details. Clients that treat `INTERNAL` as "server fault / retryable" must handle `NOT_FOUND` instead.
 
 The skin does not collapse the store's three outcomes into a single auth failure:
 
