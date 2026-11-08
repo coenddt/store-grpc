@@ -71,6 +71,8 @@ Both runtimes generate the **same service tree** for the same schema — same pa
 
 A gRPC error has three parts: a `status` code, `details` carrying the store's original message verbatim (empty if unavailable, never fabricated), and a `store-error-code` trailer with a stable machine code. The trailer uses the same code table as REST's `error.code`.
 
+There is also a `store-error-code-normalized` trailer carrying the normalized machine code (compatibility layer). For a typed `PermissionError`, `store-error-code` keeps its legacy value (`err.code` or the class name) while `store-error-code-normalized` is always `ERR_PERMISSION`; for all other codes the two are identical. The added trailer does not change existing `store-error-code` values.
+
 | `store-error-code` | gRPC status | REST | Trigger |
 |---|---|---|---|
 | `INVALID_PARAM` | `INVALID_ARGUMENT` | 400 | `params_json` is not valid JSON |

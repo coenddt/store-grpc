@@ -73,6 +73,8 @@ v0 把动态数据装成 JSON 字符串：进 `q` + `params_json`，出 `data_js
 
 一个 gRPC 错误有三部分：`status` 码，原样承载 store 原始 message 的 `details`（取不到则空串，绝不编造），以及带稳定机器码的 `store-error-code` trailer。trailer 用的码表与 REST 的 `error.code` 相同。
 
+另有 `store-error-code-normalized` trailer：承载规范化机器码（兼容层）。类型化 `PermissionError` 时 `store-error-code` 保留旧值（`err.code` 或类名），`store-error-code-normalized` 统一为 `ERR_PERMISSION`；其余码两者相同。新增 trailer 不改变既有 `store-error-code` 取值。
+
 | `store-error-code` | gRPC status | REST | 触发 |
 |---|---|---|---|
 | `INVALID_PARAM` | `INVALID_ARGUMENT` | 400 | `params_json` 不是合法 JSON |

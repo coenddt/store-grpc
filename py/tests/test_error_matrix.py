@@ -26,7 +26,9 @@ def _err(message: str, code: str) -> Exception:
 def test_matrix_permission_to_permission_denied():
     r = map_store_error(PermissionError("RBAC 拒绝"), PermissionError)
     assert r.status == STATUS.PERMISSION_DENIED
-    assert r.code == "ERR_PERMISSION"
+    # 旧 trailer 值原地不动（store_code 链 = 类名），规范化码另置
+    assert r.code == "PermissionError"
+    assert r.normalized == "ERR_PERMISSION"
 
 
 def test_matrix_no_context_code_to_permission_denied():

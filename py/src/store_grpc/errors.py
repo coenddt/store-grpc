@@ -17,11 +17,12 @@ GUARD_CODES_INVALID = ("INVALID_PARAM", "INVALID_BODY")
 
 @dataclass
 class MappedError(Exception):
-    """已映射的 gRPC 错误：status / details / 稳定码（trailer store-error-code）。"""
+    """已映射的 gRPC 错误：status / details / 稳定码（trailer store-error-code）/ 规范化码。"""
 
     status: StatusCode
     details: str
     code: str
+    normalized: str = ""
 
     def __str__(self) -> str:  # abort 需要 message 可读
         return self.details or self.code
@@ -86,8 +87,15 @@ def map_store_error(err: BaseException, permission_error: type[BaseException] | 
     if message is None:
         message = ""
 
-    def fail(status: StatusCode, code: str, details: str | None) -> MappedError:
-        return MappedError(status, details if details is not None else "", code)
+    def fail(
+        status: StatusCode, code: str, details: str | None, normalized: str | None = None
+    ) -> MappedError:
+        return MappedError(
+            status,
+            details if details is not None else "",
+            code,
+            normalized if normalized is not None else code,
+        )
 
     if isinstance(err, _GuardError):
         if err.code == "NOT_FOUND":
@@ -109,8 +117,11 @@ def map_store_error(err: BaseException, permission_error: type[BaseException] | 
         return fail(StatusCode.NOT_FOUND, "NOT_FOUND", message)
 
     if permission_error is not None and isinstance(err, permission_error):
-        # spec/03：类型化 PermissionError 的 trailer 机器码统一 ERR_PERMISSION（details 保留原 message）
-        return fail(StatusCode.PERMISSION_DENIED, "ERR_PERMISSION", message)
+        # spec/03：旧 trailer 值原地不动（store_code 链 = err.code 或类名），
+        # 规范化 trailer 统一 ERR_PERMISSION（details 保留原 message）
+        return fail(
+            StatusCode.PERMISSION_DENIED, store_code(err), message, "ERR_PERMISSION"
+        )
 
     if message.startswith(ERR_PERMISSION_PREFIX):
         return fail(StatusCode.PERMISSION_DENIED, "ERR_PERMISSION", message)

@@ -7,8 +7,9 @@
 
 ### Fixed
 
-- **类型化 `PermissionError` 的 trailer 机器码统一为 `ERR_PERMISSION`**：node / py 不再取宿主类名
-  （`PermissionError` / `PermissionErrorMock` 等）写进 `store-error-code`，与 spec/03 及字符串前缀通道对齐；
-  `details` / message 原样保留，gRPC status 仍为 `PERMISSION_DENIED`。
+- **类型化 `PermissionError`：旧 trailer 值保留 + 新增规范化 trailer**：`store-error-code` 继续取
+  `err.code` 或宿主类名（不惊动按旧值匹配的调用方）；新增 `store-error-code-normalized`，权限类统一
+  `ERR_PERMISSION`，其余码与 `store-error-code` 相同。`details` / message 原样保留，
+  gRPC status 仍为 `PERMISSION_DENIED`。node / py 同步。
 - **node proto 注释与实现/规范一致**：`q` 注释由「完整 GQL 查询串（自模型名始）」改为
   「模型名之后的 GQL 段（服务端前置模型名）」，与 py 实现、`spec/02` 映射表一致。

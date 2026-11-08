@@ -232,12 +232,15 @@ test('错误映射：INVALID_BODY / INVALID_PARAM / GQL_PARSE / PERMISSION / INT
     const denied = await h.call('ListUser', {});
     assert.equal(denied.error.code, grpc.status.PERMISSION_DENIED);
     assert.equal(denied.trailer.get('store-error-code')[0], 'ERR_PERMISSION');
+    assert.equal(denied.trailer.get('store-error-code-normalized')[0], 'ERR_PERMISSION');
 
-    // PermissionError 类（store.PermissionError 来源）⇒ PERMISSION_DENIED，trailer 机器码按 spec 统一 ERR_PERMISSION
+    // PermissionError 类（store.PermissionError 来源）⇒ PERMISSION_DENIED；
+    // 旧 trailer 值原地不动（storeCode 链 = 类名），规范化码另置 ERR_PERMISSION。
     store.query = async () => { throw new store.PermissionError('RBAC 拒绝'); };
     const byClass = await h.call('ListUser', {});
     assert.equal(byClass.error.code, grpc.status.PERMISSION_DENIED);
-    assert.equal(byClass.trailer.get('store-error-code')[0], 'ERR_PERMISSION');
+    assert.equal(byClass.trailer.get('store-error-code')[0], 'PermissionError');
+    assert.equal(byClass.trailer.get('store-error-code-normalized')[0], 'ERR_PERMISSION');
 
     // 其余 store 错误 ⇒ INTERNAL，message 原样透传（禁掩盖）
     store.query = async () => { throw new Error('数据库连接失败'); };

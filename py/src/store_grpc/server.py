@@ -161,7 +161,12 @@ def _make_handlers(store: Any, s: dict, *, id_field: str, context_provider: Cont
                 return pb.StoreReply(data_json=json.dumps(data, ensure_ascii=False))
             except Exception as e:  # noqa: BLE001 — 单一错误出口：一切异常过 spec/03 判定链（禁静默）
                 mapped = e if isinstance(e, MappedError) else map_store_error(e, permission_error)
-                context.set_trailing_metadata((("store-error-code", mapped.code),))
+                context.set_trailing_metadata(
+                    (
+                        ("store-error-code", mapped.code),
+                        ("store-error-code-normalized", mapped.normalized or mapped.code),
+                    )
+                )
                 context.abort(mapped.status, mapped.details)
 
         return behavior

@@ -6,7 +6,8 @@ REST 的错误是 HTTP 状态码 + JSON body；gRPC 的错误承载为三件套�
 
 1. **status code**（`grpc.StatusCode`）
 2. **details**：原 message（透传，取不到置空串——禁伪造）
-3. **trailer metadata** `store-error-code`：稳定机器码（与 REST 错误 body 的 `error.code` 同码表）
+3. **trailer metadata `store-error-code`**：稳定机器码（与 REST 错误 body 的 `error.code` 同码表）
+4. **trailer metadata `store-error-code-normalized`**：规范化机器码（兼容层）；类型化 PermissionError 时统一为 `ERR_PERMISSION` 而 `store-error-code` 保留旧值（`err.code` 或类名），其余码两者相同。新增 trailer，不改变既有 `store-error-code` 取值。
 
 ## 状态码映射表
 
@@ -16,7 +17,7 @@ REST 的错误是 HTTP 状态码 + JSON body；gRPC 的错误承载为三件套�
 | `INVALID_BODY` | `INVALID_ARGUMENT` | 400 | body_json / set_json 非对象或非法 JSON |
 | `GQL_PARSE` | `INVALID_ARGUMENT` | 400 | core 抛 `ERR_GQL_PARSE:`（details 剥前缀取原文） |
 | `CONTEXT_ERROR` | `UNAUTHENTICATED` | 401 | contextProvider 非权限类抛错 |
-| `ERR_PERMISSION` | `PERMISSION_DENIED` | 403 | PermissionError 类 / `ERR_PERMISSION:` 前缀 |
+| `ERR_PERMISSION` | `PERMISSION_DENIED` | 403 | PermissionError 类 / `ERR_PERMISSION:` 前缀。**类型化 PermissionError**：`store-error-code` 保留旧值（`err.code` 或类名），`store-error-code-normalized = ERR_PERMISSION`；字符串前缀路径两者均为 `ERR_PERMISSION` |
 | `no_context` | `PERMISSION_DENIED` | 403 | host `NoContextError`（machine code `no_context`）/ core `ERR_NO_CONTEXT:` 前缀（requireContext 开启且 ctx 缺失，与 PermissionError 同属权限类） |
 | `NOT_FOUND` | `NOT_FOUND` | 404 | 适配层 queryOne 空结果；或宿主/core 抛 `ERR_NOT_FOUND`（`err.code` 或消息前缀 `ERR_NOT_FOUND:`，details 原样透传不剥前缀）；或资源无任何可读副本（core 稳定前缀 `ERR_RESOURCE_NOT_FOUND:`，details **剥前缀**取 core 原文，与 REST spec/03 同口径） |
 | err.code / 类名 | `INTERNAL` | 500 | 其余一切错误（码取 err.code，缺省类名，再缺省 `STORE_ERROR`） |

@@ -167,14 +167,18 @@ function requireJsonObject(raw, label) {
 }
 
 /**
- * spec/03 错误 → { code, details, metadata }（metadata.trailer 携带 store-error-code）。
+ * spec/03 错误 → { code, details, metadata }。
+ * metadata.trailer：`store-error-code` 保留旧值（兼容既有按旧值匹配的调用方），
+ * `store-error-code-normalized` 承载规范化机器码（权限类统一 ERR_PERMISSION）。
  * details 一律原 message 透传、取不到置空串（禁伪造）。
  */
 function mapStoreError(err, PermissionErrorClass, grpc) {
   const message = err && err.message != null ? String(err.message) : '';
-  const fail = (status, code, details) => {
+  const fail = (status, code, details, normalized) => {
     const metadata = new grpc.Metadata();
     if (code) metadata.set('store-error-code', code);
+    const normalizedCode = normalized || code;
+    if (normalizedCode) metadata.set('store-error-code-normalized', normalizedCode);
     return { code: status, details: details != null ? details : '', metadata };
   };
   // spec/03：资源无任何可读副本（core 稳定前缀 ERR_RESOURCE_NOT_FOUND:）⇒ NOT_FOUND，
@@ -193,8 +197,9 @@ function mapStoreError(err, PermissionErrorClass, grpc) {
     return fail(grpc.status.UNAUTHENTICATED, 'CONTEXT_ERROR', err.message);
   }
   if (PermissionErrorClass && err instanceof PermissionErrorClass) {
-    // spec/03：类型化 PermissionError 的 trailer 机器码统一 ERR_PERMISSION（details 保留原 message）
-    return fail(grpc.status.PERMISSION_DENIED, 'ERR_PERMISSION', err.message);
+    // spec/03：旧 trailer 值原地不动（storeCode 链 = err.code 或类名），
+    // 规范化 trailer 统一 ERR_PERMISSION（details 保留原 message）
+    return fail(grpc.status.PERMISSION_DENIED, storeCode(err), err.message, 'ERR_PERMISSION');
   }
   if (err && typeof err.message === 'string' && err.message.startsWith('ERR_PERMISSION:')) {
     return fail(grpc.status.PERMISSION_DENIED, 'ERR_PERMISSION', err.message);
